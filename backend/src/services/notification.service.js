@@ -26,20 +26,56 @@ export async function notify({ userId, type, message, relatedLeaveRequestId, ema
   return notification;
 }
 
+function labelFor(type) {
+  return type === 'extension_requested'
+    ? 'extension request'
+    : type === 'stop_requested'
+      ? 'request to end leave early'
+      : 'leave request';
+}
+
+/**
+ * ADDENDUM 2.1/2.2 — an admin-only leave type has no gatekeeper individual, so
+ * the email goes to the SHARED admin address (COMPANY_ADMIN_NOTIFICATION_EMAIL)
+ * rather than any one admin's personal inbox. In-app notifications are still
+ * created for every active admin so it shows up in whoever's list view.
+ */
+export async function notifyAdminsOfAdminOnlyRequest(request, type = 'leave_pending_approval') {
+  const label = labelFor(type);
+  const message = `${request.employeeName} submitted a ${request.leaveType} ${label} that requires a direct Admin decision.`;
+  const subject = `Admin decision required: ${request.employeeName}'s ${request.leaveType} ${label}`;
+
+  const shared = process.env.COMPANY_ADMIN_NOTIFICATION_EMAIL;
+  if (shared) {
+    await sendEmail({ to: shared, subject, html: templates.pendingApproval(request, 'Admin') });
+  } else {
+    console.warn('COMPANY_ADMIN_NOTIFICATION_EMAIL not set — admin-only request email skipped.');
+  }
+
+  const admins = await User.find({ role: 'admin', status: 'active' });
+  for (const admin of admins) {
+    // Never notify an admin about their own request (they cannot decide it).
+    if (String(admin._id) === String(request.employeeId)) continue;
+    await Notification.create({
+      userId: admin._id,
+      type,
+      message,
+      relatedLeaveRequestId: request._id,
+      emailSent: Boolean(shared),
+    });
+  }
+}
+
 /** Notifies requiredApproverIds[0] — the gatekeeper of this request's own chain. */
 export async function notifyGatekeeper(request, type = 'leave_pending_approval') {
+  if (request.isAdminOnlyDecision) return notifyAdminsOfAdminOnlyRequest(request, type);
   const gatekeeperId = request.requiredApproverIds?.[0];
   if (!gatekeeperId) return;
 
   const gatekeeper = await User.findById(gatekeeperId);
   if (!gatekeeper) return;
 
-  const label =
-    type === 'extension_requested'
-      ? 'extension request'
-      : type === 'stop_requested'
-        ? 'request to end leave early'
-        : 'leave request';
+  const label = labelFor(type);
 
   await notify({
     userId: gatekeeper._id,

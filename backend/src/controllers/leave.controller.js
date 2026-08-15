@@ -14,6 +14,7 @@ import {
   actOnBehalf,
   approveLeave,
   getCurrentTurnApproverIds,
+  isAwaitingAdminDecision,
   isCurrentTurnApprover,
   isRequiredApprover,
   rejectLeave,
@@ -41,19 +42,64 @@ async function resolvePolicy(leaveType, user) {
   return scoped.sort((a, b) => score(b) - score(a))[0];
 }
 
+/**
+ * FINAL MANAGER APPROVAL — resolves the approval chain to snapshot onto a new
+ * request. Three mutually exclusive modes:
+ *   adminOnlyApproval  → no chain, Admin decides directly.
+ *   finalApprovalMode  → exactly ONE approver: the applicant's own assigned
+ *                        manager, resolved from the database (never the client).
+ *   otherwise          → the policy's configured sequential chain.
+ */
+async function resolveChainFor(policy, user) {
+  if (policy.adminOnlyApproval) {
+    return { requiredApproverIds: [], isAdminOnlyDecision: true };
+  }
+
+  if (policy.finalApprovalMode) {
+    const NO_MANAGER =
+      'No active Manager is assigned to this employee. Please contact an administrator.';
+    if (!user.managerId) throw new ValidationError(NO_MANAGER);
+    const manager = await User.findById(user.managerId);
+    if (!manager || manager.role !== 'manager' || manager.status !== 'active') {
+      throw new ValidationError(NO_MANAGER);
+    }
+    if (String(manager._id) === String(user._id)) {
+      throw new ValidationError(NO_MANAGER);
+    }
+    return { requiredApproverIds: [manager._id], isAdminOnlyDecision: false };
+  }
+
+  return {
+    requiredApproverIds: policy.approvalRouting.approverIds,
+    isAdminOnlyDecision: false,
+  };
+}
+
 async function saturdayOffFor(departmentName) {
   const dept = await Department.findOne({ name: departmentName });
   return dept?.saturdayOff ?? true;
 }
 
 /** Adds derived, request-scoped view data the frontend needs (Part 5.5). */
-function decorate(request, viewerId) {
+function decorate(request, viewer) {
   const obj = request.toObject ? request.toObject() : request;
+  const viewerId = viewer?._id ?? viewer;
+  const viewerRole = viewer?.role;
   const turnIds = getCurrentTurnApproverIds(request);
+  const awaitingAdmin = isAwaitingAdminDecision(request);
   return {
     ...obj,
+    // ADDENDUM 2.4 — these two must never be stripped from any admin/manager
+    // facing serialization. They are what lets the UI explain the day count.
+    totalWorkingDays: obj.totalWorkingDays,
+    excludedWeekendDates: obj.excludedWeekendDates || [],
     currentTurnApproverIds: turnIds,
-    isMyTurn: viewerId ? turnIds.includes(String(viewerId)) : false,
+    awaitingAdminDecision: awaitingAdmin,
+    isMyTurn: awaitingAdmin
+      ? viewerRole === 'admin' && String(viewerId) !== String(request.employeeId)
+      : viewerId
+        ? turnIds.includes(String(viewerId))
+        : false,
   };
 }
 
@@ -85,6 +131,11 @@ export const listLeaveRequests = asyncHandler(async (req, res) => {
   if (req.query.isStopRequest !== undefined) {
     filter.isStopRequest = req.query.isStopRequest === 'true';
   }
+  // ADDENDUM 2.1 — lets Admin pull the admin-only queue:
+  // ?isAdminOnlyDecision=true&status=pending
+  if (req.query.isAdminOnlyDecision !== undefined) {
+    filter.isAdminOnlyDecision = req.query.isAdminOnlyDecision === 'true';
+  }
   if (req.query.from || req.query.to) {
     filter.startDate = {};
     if (req.query.from) filter.startDate.$gte = new Date(req.query.from);
@@ -100,7 +151,7 @@ export const listLeaveRequests = asyncHandler(async (req, res) => {
     LeaveRequest.countDocuments(filter),
   ]);
 
-  const data = items.map((r) => decorate(r, req.currentUser._id));
+  const data = items.map((r) => decorate(r, req.currentUser));
   res.json({ success: true, ...paginated(data, total, pagination) });
 });
 
@@ -115,7 +166,7 @@ export const getLeaveRequest = asyncHandler(async (req, res) => {
   // 403. A 403 would confirm the record exists.
   if (!involved) throw new NotFoundError();
 
-  res.json({ success: true, data: decorate(request, req.currentUser._id) });
+  res.json({ success: true, data: decorate(request, req.currentUser) });
 });
 
 /** GET /api/leave-requests/available-types — drives the submission dropdown. */
@@ -145,6 +196,7 @@ export const createLeaveRequest = asyncHandler(async (req, res) => {
   if (end < start) throw new ValidationError('End date cannot be before the start date.');
 
   const policy = await resolvePolicy(leaveType, user);
+  const chain = await resolveChainFor(policy, user);
 
   if (policy.documentRequirement === 'required' && !req.file) {
     throw new ValidationError('A supporting document is required for this leave type.');
@@ -171,7 +223,9 @@ export const createLeaveRequest = asyncHandler(async (req, res) => {
     attachmentName: req.file?.originalname,
     // Snapshot the chain at submission time. Later policy edits must not
     // retroactively re-route a request that is already in flight.
-    requiredApproverIds: policy.approvalRouting.approverIds,
+    ...chain,
+    approvedByIds: [],
+    rejectedByIds: [],
     status: 'pending',
   });
 
@@ -188,12 +242,12 @@ export const createLeaveRequest = asyncHandler(async (req, res) => {
     details: `${totalWorkingDays} working day(s)`,
   });
 
-  res.status(201).json({ success: true, data: decorate(request, user._id) });
+  res.status(201).json({ success: true, data: decorate(request, user) });
 });
 
 export const approve = asyncHandler(async (req, res) => {
   const request = await approveLeave(req.params.id, req.currentUser, req.body.comment);
-  res.json({ success: true, data: decorate(request, req.currentUser._id) });
+  res.json({ success: true, data: decorate(request, req.currentUser) });
 });
 
 export const reject = asyncHandler(async (req, res) => {
@@ -201,7 +255,7 @@ export const reject = asyncHandler(async (req, res) => {
     throw new ValidationError('A comment is required when rejecting a request.');
   }
   const request = await rejectLeave(req.params.id, req.currentUser, req.body.comment);
-  res.json({ success: true, data: decorate(request, req.currentUser._id) });
+  res.json({ success: true, data: decorate(request, req.currentUser) });
 });
 
 /** Spec Part 5.3 — Admin fills ONE named approver's slot. The chain continues. */
@@ -212,7 +266,7 @@ export const actOnBehalfOf = asyncHandler(async (req, res) => {
     throw new ValidationError('action must be "approved" or "rejected".');
   }
   const request = await actOnBehalf(req.params.id, req.currentUser, approverId, action, comment);
-  res.json({ success: true, data: decorate(request, req.currentUser._id) });
+  res.json({ success: true, data: decorate(request, req.currentUser) });
 });
 
 /** Shared guard for extend/stop: own, approved, and not finished yet (Part 7). */
@@ -266,6 +320,7 @@ export const extendLeave = asyncHandler(async (req, res) => {
   }
 
   const policy = await resolvePolicy(original.leaveType, user);
+  const chain = await resolveChainFor(policy, user);
 
   const extension = await LeaveRequest.create({
     employeeId: user._id,
@@ -281,7 +336,9 @@ export const extendLeave = asyncHandler(async (req, res) => {
     isExtension: true,
     originalRequestId: original._id,
     isPaidOverride: req.body.isPaidOverride ?? null,
-    requiredApproverIds: policy.approvalRouting.approverIds,
+    ...chain,
+    approvedByIds: [],
+    rejectedByIds: [],
     status: 'pending',
   });
 
@@ -298,7 +355,7 @@ export const extendLeave = asyncHandler(async (req, res) => {
     details: `Extension of ${original._id} to ${end.toISOString().split('T')[0]}`,
   });
 
-  res.status(201).json({ success: true, data: decorate(extension, user._id) });
+  res.status(201).json({ success: true, data: decorate(extension, user) });
 });
 
 /**
@@ -324,6 +381,7 @@ export const requestStopLeave = asyncHandler(async (req, res) => {
   }
 
   const policy = await resolvePolicy(original.leaveType, user);
+  const chain = await resolveChainFor(policy, user);
 
   const stopRequest = await LeaveRequest.create({
     employeeId: user._id,
@@ -338,7 +396,9 @@ export const requestStopLeave = asyncHandler(async (req, res) => {
     reason,
     isStopRequest: true,
     originalRequestId: original._id,
-    requiredApproverIds: policy.approvalRouting.approverIds,
+    ...chain,
+    approvedByIds: [],
+    rejectedByIds: [],
     status: 'pending',
   });
 
@@ -355,7 +415,7 @@ export const requestStopLeave = asyncHandler(async (req, res) => {
     details: `Requested to return on ${stopDate.toISOString().split('T')[0]}`,
   });
 
-  res.status(201).json({ success: true, data: decorate(stopRequest, user._id) });
+  res.status(201).json({ success: true, data: decorate(stopRequest, user) });
 });
 
 /** Employees may only read their own balance; managers/admins may read anyone's. */

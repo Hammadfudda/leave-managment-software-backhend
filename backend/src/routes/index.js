@@ -5,6 +5,7 @@ import leaveRoutes from './leave.routes.js';
 import policyRoutes from './policy.routes.js';
 import teamRoutes from './team.routes.js';
 import notificationRoutes from './notification.routes.js';
+import dashboardRoutes from './dashboard.routes.js';
 import {
   gradeRoutes,
   departmentRoutes,
@@ -27,6 +28,7 @@ router.use('/leave-policies', policyRoutes);
 router.use('/leave-requests', leaveRoutes);
 router.use('/team', teamRoutes);
 router.use('/notifications', notificationRoutes);
+router.use('/dashboard', dashboardRoutes);
 router.use('/reports', reportRoutes);
 router.use('/calendar', calendarRoutes);
 router.use('/audit-logs', auditRoutes);

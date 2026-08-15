@@ -111,6 +111,8 @@ PATCH  /leave-requests/:id/approve | /reject | /act-on-behalf
 POST   /leave-requests/:id/extend | /request-stop
 GET    /leave-requests/balance/:employeeId
 
+GET    /dashboard/admin           GET   /dashboard/manager      GET /dashboard/employee
+
 GET    /team/my-team              GET   /team/managers?department=X
 GET    /notifications             PATCH /notifications/:id/read
 GET    /reports/summary           GET   /reports/export.csv
@@ -130,3 +132,44 @@ list. Role scoping is always applied **before** query filters.
 
 Statuses: 400 validation · 401 unauthenticated · 403 not your turn / not allowed ·
 404 not found or not yours · 409 duplicate/in-use · 423 account locked · 500 generic.
+
+
+## Admin-only leave types (Addendum 2)
+
+A `LeavePolicy` can set `adminOnlyApproval: true`. That leave type has **no
+approval chain at all**: `approvalRouting.approverIds` is forced empty, and a
+request submitted under it is created with `isAdminOnlyDecision: true` and an
+empty `requiredApproverIds`.
+
+An empty `requiredApproverIds` does **not** auto-approve those requests. They
+stay `pending` until any active Admin calls `PATCH /leave-requests/:id/approve`
+or `/reject` directly. `act-on-behalf` is rejected on them — there is no slot to
+fill. The self-approval guard still applies: an Admin can never decide their own
+request.
+
+Admin queue: `GET /leave-requests?isAdminOnlyDecision=true&status=pending`.
+
+Submission emails for these go to `COMPANY_ADMIN_NOTIFICATION_EMAIL` (a shared
+inbox), not to any one admin's personal address; in-app notifications are still
+created for every active Admin. Normal chain-based requests keep emailing the
+gatekeeper personally.
+
+## Dashboards
+
+- `GET /dashboard/admin` — company-wide only: `totalActiveEmployees`,
+  `pendingApprovalsCount` (all chains + all admin-only), `adminOnlyPendingCount`,
+  `onLeaveToday`, `upcomingLeaveNext7Days`, `recentAuditActivity`,
+  `departmentsPendingSaturdayReview`. Deliberately contains **no** personal
+  leave widgets — Admin does not apply for leave in this system.
+- `GET /dashboard/manager` — team size, actionable pending approvals (only where
+  it is truly their turn), team on leave today, 30-day team calendar, plus their
+  own balances/requests since a manager is also an employee.
+- `GET /dashboard/employee` — own balances, request counts, recent requests and
+  upcoming approved leave.
+
+## Working-day visibility
+
+Every Admin/Manager-facing serialization of a leave request — list, detail,
+dashboard rows, calendar, CSV export — includes `totalWorkingDays` and
+`excludedWeekendDates` (the CSV also carries `excludedDaysCount`), so the
+frontend can always show "Sat/Sun included — N day(s) excluded from count".

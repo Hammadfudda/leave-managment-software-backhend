@@ -14,9 +14,12 @@ import { getPagination, paginated } from '../utils/pagination.js';
  * WHO APPROVES IT. They are independent. Never derive one from the other.
  */
 
-function normalizeRouting(body) {
+function normalizeRouting(body, adminOnly) {
   const routing = body.approvalRouting || {};
-  const approverIds = Array.isArray(routing.approverIds) ? routing.approverIds : [];
+  const approverIds =
+    // ADDENDUM 2.1 — an admin-only policy has no chain; the approver list is
+    // forced empty regardless of what the client sent.
+    adminOnly || !Array.isArray(routing.approverIds) ? [] : routing.approverIds;
   return {
     designation: routing.designation || null,
     department: routing.department || null,
@@ -53,8 +56,12 @@ export const createPolicy = asyncHandler(async (req, res) => {
   const { leaveType, applicableRole, isPaid, minDaysNoticeRequired, documentRequirement } = req.body;
   if (!leaveType) throw new ValidationError('Leave type is required.');
 
-  const approvalRouting = normalizeRouting(req.body);
-  if (approvalRouting.approverIds.length === 0) {
+  const adminOnlyApproval = Boolean(req.body.adminOnlyApproval);
+  // FINAL MANAGER APPROVAL — the approver is resolved per-employee at
+  // submission time, so a policy in this mode needs no approver list.
+  const finalApprovalMode = Boolean(req.body.finalApprovalMode);
+  const approvalRouting = normalizeRouting(req.body, adminOnlyApproval);
+  if (!adminOnlyApproval && !finalApprovalMode && approvalRouting.approverIds.length === 0) {
     throw new ValidationError('At least one approver is required.');
   }
 
@@ -76,6 +83,8 @@ export const createPolicy = asyncHandler(async (req, res) => {
     // submission, it is shown to approvers as context.
     minDaysNoticeRequired: Number(minDaysNoticeRequired) || 0,
     documentRequirement: documentRequirement || 'optional',
+    adminOnlyApproval,
+    finalApprovalMode,
     approvalRouting,
   });
 
@@ -87,7 +96,9 @@ export const createPolicy = asyncHandler(async (req, res) => {
     targetId: policy._id,
     leaveType: policy.leaveType,
     department: approvalRouting.department,
-    details: `Created ${policy.leaveType} policy with ${approvalRouting.approverIds.length} approver(s)`,
+    details: adminOnlyApproval
+      ? `Created ${policy.leaveType} policy — Admin-only approval (no chain)`
+      : `Created ${policy.leaveType} policy with ${approvalRouting.approverIds.length} approver(s)`,
   });
 
   res.status(201).json({ success: true, data: policy });
@@ -106,8 +117,18 @@ export const updatePolicy = asyncHandler(async (req, res) => {
   }
   if (documentRequirement !== undefined) policy.documentRequirement = documentRequirement;
 
-  if (req.body.approvalRouting) {
-    const approvalRouting = normalizeRouting(req.body);
+  if (req.body.adminOnlyApproval !== undefined) {
+    policy.adminOnlyApproval = Boolean(req.body.adminOnlyApproval);
+    // Switching a policy to admin-only clears its now-meaningless chain.
+    if (policy.adminOnlyApproval) policy.approvalRouting.approverIds = [];
+  }
+
+  if (req.body.finalApprovalMode !== undefined) {
+    policy.finalApprovalMode = Boolean(req.body.finalApprovalMode);
+  }
+
+  if (req.body.approvalRouting && !policy.adminOnlyApproval && !policy.finalApprovalMode) {
+    const approvalRouting = normalizeRouting(req.body, false);
     if (approvalRouting.approverIds.length === 0) {
       throw new ValidationError('At least one approver is required.');
     }

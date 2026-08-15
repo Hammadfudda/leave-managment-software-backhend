@@ -31,6 +31,9 @@ export function computeLeaveStatus(requiredApproverIds, approvedByIds, rejectedB
 // Spec Part 5.5
 export function getCurrentTurnApproverIds(request) {
   if (request.status !== 'pending') return [];
+  // Admin-only requests have no named approvers — the concept of a turn does
+  // not apply to them (see isAwaitingAdminDecision).
+  if (request.isAdminOnlyDecision) return [];
   const required = (request.requiredApproverIds || []).map(String);
   if (required.length === 0) return [];
   const approved = (request.approvedByIds || []).map(String);
@@ -43,6 +46,14 @@ export function getCurrentTurnApproverIds(request) {
 
 export function isCurrentTurnApprover(request, userId) {
   return getCurrentTurnApproverIds(request).includes(String(userId));
+}
+
+/**
+ * ADDENDUM 2.1 — for an admin-only request there is no chain and no "turn":
+ * any active Admin may decide it at any time while it is pending.
+ */
+export function isAwaitingAdminDecision(request) {
+  return Boolean(request.isAdminOnlyDecision) && request.status === 'pending';
 }
 
 export function isRequiredApprover(request, userId) {

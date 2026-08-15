@@ -69,6 +69,8 @@ export const summary = asyncHandler(async (req, res) => {
       totalWorkingDaysApproved,
       extensions: requests.filter((r) => r.isExtension).length,
       stopRequests: requests.filter((r) => r.isStopRequest).length,
+      adminOnlyPending: requests.filter((r) => r.isAdminOnlyDecision && r.status === 'pending')
+        .length,
       activeEmployees: await User.countDocuments(employeeFilter),
       pendingDeletion:
         req.currentUser.role === 'admin'
@@ -90,6 +92,10 @@ export const exportRequestsCsv = asyncHandler(async (req, res) => {
     endDate: new Date(r.actualEndDate || r.endDate).toISOString().split('T')[0],
     calendarDays: r.totalDaysRequested,
     workingDays: r.totalWorkingDays,
+    // ADDENDUM 2.4 — the excluded weekend dates travel with every
+    // admin/manager-facing serialization, exports included.
+    excludedWeekendDates: (r.excludedWeekendDates || []).join('; '),
+    excludedDaysCount: (r.excludedWeekendDates || []).length,
     status: r.status,
     type: r.isExtension ? 'extension' : r.isStopRequest ? 'stop-request' : 'leave',
     reason: r.reason,
@@ -110,6 +116,8 @@ export const exportRequestsCsv = asyncHandler(async (req, res) => {
       'endDate',
       'calendarDays',
       'workingDays',
+      'excludedWeekendDates',
+      'excludedDaysCount',
       'status',
       'type',
       'reason',

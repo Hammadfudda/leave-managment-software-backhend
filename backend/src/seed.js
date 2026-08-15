@@ -129,6 +129,21 @@ async function seed() {
     );
   }
 
+  // Addendum 2.1 — an admin-only leave type: no chain at all, decided
+  // directly by any Admin. approverIds stays empty on purpose.
+  await upsert(
+    LeavePolicy,
+    { leaveType: 'unpaid' },
+    {
+      applicableRole: 'All Employees',
+      isPaid: false,
+      minDaysNoticeRequired: 0,
+      documentRequirement: 'optional',
+      adminOnlyApproval: true,
+      approvalRouting: { designation: null, department: null, grade: null, approverIds: [] },
+    }
+  );
+
   console.log('Seed complete. Log in with any of:');
   for (const p of people) console.log(`  ${p.email} / ${p.cnic}`);
   process.exit(0);

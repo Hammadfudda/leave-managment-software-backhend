@@ -8,6 +8,7 @@ import { deductLeaveBalance, restoreLeaveBalance } from './balance.service.js';
 import { notifyNextStep } from './notification.service.js';
 import {
   computeLeaveStatus,
+  isAwaitingAdminDecision,
   getCurrentTurnApproverIds,
   isCurrentTurnApprover,
   isRequiredApprover,
@@ -15,6 +16,7 @@ import {
 
 export {
   computeLeaveStatus,
+  isAwaitingAdminDecision,
   getCurrentTurnApproverIds,
   isCurrentTurnApprover,
   isRequiredApprover,
@@ -60,6 +62,44 @@ export async function applyApprovalEffect(request) {
   }
 }
 
+
+/**
+ * ADDENDUM 2.1 — the admin-only decision branch, shared by approve and reject.
+ * An empty requiredApproverIds array must NOT auto-approve here: the request
+ * waits until an Admin explicitly decides it. Returns the saved request, or
+ * null when this request is not an admin-only one (fall through to the chain).
+ */
+async function decideAsAdmin(request, approver, action, comment) {
+  if (!request.isAdminOnlyDecision) return null;
+  if (approver.role !== 'admin') {
+    throw new ForbiddenError('Only an Admin can decide this leave type.');
+  }
+  request.status = action;
+  request.approvalHistory.push({
+    approverId: approver._id,
+    approverName: approver.fullName,
+    approverRole: approver.role,
+    action,
+    comment,
+  });
+  await request.save();
+  if (action === 'approved') await applyApprovalEffect(request);
+  await notifyNextStep(request, action, comment);
+  await audit({
+    actorId: approver._id,
+    actorName: approver.fullName,
+    action: action === 'approved' ? 'APPROVE_LEAVE' : 'REJECT_LEAVE',
+    targetType: 'LeaveRequest',
+    targetId: request._id,
+    affectedPerson: request.employeeName,
+    department: request.department,
+    leaveType: request.leaveType,
+    details: 'Admin-only leave type — decided directly by Admin',
+    comment,
+  });
+  return request;
+}
+
 /** Spec Part 5.2 */
 export async function approveLeave(requestId, approver, comment) {
   const request = await LeaveRequest.findById(requestId);
@@ -72,6 +112,10 @@ export async function approveLeave(requestId, approver, comment) {
   if (request.status !== 'pending') {
     throw new ForbiddenError('This request has already been finalized.');
   }
+
+  const adminDecided = await decideAsAdmin(request, approver, 'approved', comment);
+  if (adminDecided) return adminDecided;
+
   // Part 5.5 — enforced server-side, not just in the UI.
   if (!isCurrentTurnApprover(request, approver._id)) {
     // A required approver whose turn hasn't come yet gets a clear 403; anyone
@@ -131,6 +175,10 @@ export async function rejectLeave(requestId, approver, comment) {
   if (request.status !== 'pending') {
     throw new ForbiddenError('This request has already been finalized.');
   }
+
+  const adminDecided = await decideAsAdmin(request, approver, 'rejected', comment);
+  if (adminDecided) return adminDecided;
+
   if (!isCurrentTurnApprover(request, approver._id)) {
     if (!isRequiredApprover(request, approver._id)) throw new NotFoundError();
     throw new ForbiddenError('It is not your turn to act on this request yet.');
@@ -183,6 +231,13 @@ export async function rejectLeave(requestId, approver, comment) {
 export async function actOnBehalf(requestId, admin, targetApproverId, action, comment) {
   const request = await LeaveRequest.findById(requestId);
   if (!request) throw new NotFoundError();
+  // ADDENDUM 2.1 — there is no slot to fill on an admin-only request; Admin
+  // uses the plain approve/reject endpoints for those.
+  if (request.isAdminOnlyDecision) {
+    throw new ForbiddenError(
+      'This leave type is decided directly by Admin — use approve or reject instead.'
+    );
+  }
   const targetApprover = await User.findById(targetApproverId);
   if (!targetApprover) throw new NotFoundError();
 

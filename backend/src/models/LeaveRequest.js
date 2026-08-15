@@ -31,6 +31,11 @@ const leaveRequestSchema = new Schema(
     approvedByIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
     rejectedByIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
 
+    // ADDENDUM 2.1 — copied from policy.adminOnlyApproval at submission time.
+    // When true, requiredApproverIds is empty BY DESIGN and the request must
+    // NOT auto-approve: it sits at 'pending' until an Admin decides it.
+    isAdminOnlyDecision: { type: Boolean, default: false },
+
     approvalHistory: [
       {
         approverId: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -64,5 +69,6 @@ const leaveRequestSchema = new Schema(
 leaveRequestSchema.index({ employeeId: 1, status: 1 });
 leaveRequestSchema.index({ requiredApproverIds: 1, status: 1 });
 leaveRequestSchema.index({ originalRequestId: 1 });
+leaveRequestSchema.index({ isAdminOnlyDecision: 1, status: 1 });
 
 export default mongoose.model('LeaveRequest', leaveRequestSchema);

@@ -21,6 +21,18 @@ const leavePolicySchema = new Schema(
       default: 'optional',
     },
 
+    // ADDENDUM 2.1 — when true this leave type has NO approval chain at all.
+    // It is decided directly and solely by an Admin, and approvalRouting
+    // .approverIds is ignored (and forced empty by the controller).
+    adminOnlyApproval: { type: Boolean, default: false },
+
+    // FINAL MANAGER APPROVAL — when true, approvalRouting.approverIds is
+    // ignored entirely. At submission time the single required approver is
+    // resolved dynamically from the applicant's own employee.managerId, and
+    // that manager's decision is final (no second tier, no admin step).
+    // Completely independent of adminOnlyApproval.
+    finalApprovalMode: { type: Boolean, default: false },
+
     approvalRouting: {
       // These three describe WHO THIS POLICY APPLIES TO (the applicant scope).
       // They are completely independent of approverIds below — do not let one
