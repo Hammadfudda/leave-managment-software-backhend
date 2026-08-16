@@ -67,13 +67,40 @@ export async function notifyAdminsOfAdminOnlyRequest(request, type = 'leave_pend
 }
 
 /** Notifies requiredApproverIds[0] — the gatekeeper of this request's own chain. */
-export async function notifyGatekeeper(request, type = 'leave_pending_approval') {
-  if (request.isAdminOnlyDecision) return notifyAdminsOfAdminOnlyRequest(request, type);
-  const gatekeeperId = request.requiredApproverIds?.[0];
-  if (!gatekeeperId) return;
+export async function notifyGatekeeper(
+  request,
+  type = 'leave_pending_approval'
+) {
+  if (request.isAdminOnlyDecision) {
+    return notifyAdminsOfAdminOnlyRequest(request, type);
+  }
 
-  const gatekeeper = await User.findById(gatekeeperId);
-  if (!gatekeeper) return;
+  const gatekeeperId = request.requiredApproverIds?.[0];
+
+  if (!gatekeeperId) {
+    console.warn('No gatekeeper found for request:', String(request._id));
+    return;
+  }
+
+  const gatekeeper = await User.findById(gatekeeperId)
+    .select('_id fullName email role status')
+    .lean();
+
+  if (!gatekeeper) {
+    console.warn(
+      'Gatekeeper user not found:',
+      String(gatekeeperId)
+    );
+    return;
+  }
+
+  console.log('===== LEAVE EMAIL DEBUG =====');
+  console.log('Request ID:', String(request._id));
+  console.log('Gatekeeper ID:', String(gatekeeper._id));
+  console.log('Gatekeeper Name:', gatekeeper.fullName);
+  console.log('Gatekeeper Email:', gatekeeper.email);
+  console.log('Gatekeeper Role:', gatekeeper.role);
+  console.log('=============================');
 
   const label = labelFor(type);
 
@@ -85,7 +112,10 @@ export async function notifyGatekeeper(request, type = 'leave_pending_approval')
     email: {
       to: gatekeeper.email,
       subject: `Action required: ${request.employeeName}'s ${request.leaveType} ${label}`,
-      html: templates.pendingApproval(request, gatekeeper.fullName),
+      html: templates.pendingApproval(
+        request,
+        gatekeeper.fullName
+      ),
     },
   });
 }
