@@ -1,5 +1,7 @@
 import 'dotenv/config';
+import dns from 'node:dns';
 import bcrypt from 'bcryptjs';
+
 import { connectDB } from './config/db.js';
 import User from './models/User.js';
 import Grade from './models/Grade.js';
@@ -9,21 +11,27 @@ import RoleLabel from './models/RoleLabel.js';
 import LeavePolicy from './models/LeavePolicy.js';
 import { initializeLeaveBalances } from './services/balance.service.js';
 
+// Fix MongoDB Atlas SRV DNS resolution
+dns.setServers(['8.8.8.8', '8.8.4.4']);
+
 /**
  * Minimum viable starting data: one grade, one department, an Admin, a Manager
  * and an Employee, plus annual/sick/casual policies routed through the manager
- * then the admin. Every password is the person's CNIC, exactly as Part 3.1
- * specifies for real accounts.
+ * then the admin.
+ *
+ * Every password is the person's CNIC.
  *
  * Safe to re-run: everything is upserted by its natural key.
  */
 async function upsert(Model, where, doc) {
   const existing = await Model.findOne(where);
+
   if (existing) {
     Object.assign(existing, doc);
     await existing.save();
     return existing;
   }
+
   return Model.create({ ...where, ...doc });
 }
 
@@ -43,11 +51,27 @@ async function seed() {
     }
   );
 
-  await upsert(Department, { name: 'Engineering' }, { saturdayOff: true });
-  await upsert(Department, { name: 'Operations' }, { saturdayOff: false }); // 6-day week
-  for (const name of ['Chief', 'Senior Engineer', 'Engineer', 'Officer']) {
+  await upsert(
+    Department,
+    { name: 'Engineering' },
+    { saturdayOff: true }
+  );
+
+  await upsert(
+    Department,
+    { name: 'Operations' },
+    { saturdayOff: false }
+  );
+
+  for (const name of [
+    'Chief',
+    'Senior Engineer',
+    'Engineer',
+    'Officer',
+  ]) {
     await upsert(Designation, { name }, {});
   }
+
   for (const name of ['HR', 'Finance', 'Technical']) {
     await upsert(RoleLabel, { name }, {});
   }
@@ -84,6 +108,7 @@ async function seed() {
   ];
 
   const created = {};
+
   for (const person of people) {
     const user = await upsert(
       User,
@@ -98,39 +123,51 @@ async function seed() {
         status: 'active',
       }
     );
+
     created[person.role] = user;
+
     await initializeLeaveBalances(user._id, grade);
   }
 
-  // Manager reports to Admin; Employee reports to Manager.
+  // Manager reports to Admin
   created.manager.managerId = created.admin._id;
   await created.manager.save();
+
+  // Employee reports to Manager
   created.employee.managerId = created.manager._id;
   await created.employee.save();
 
-  // Chain order matters: index 0 (the manager) is the gatekeeper, the Admin
-  // only becomes actionable once the manager has approved.
+  // Leave approval routing
   for (const leaveType of ['annual', 'sick', 'casual']) {
     await upsert(
       LeavePolicy,
-      { leaveType, 'approvalRouting.department': 'Engineering' },
+      {
+        leaveType,
+        'approvalRouting.department': 'Engineering',
+      },
       {
         applicableRole: 'All Employees',
         isPaid: true,
         minDaysNoticeRequired: leaveType === 'annual' ? 7 : 0,
-        documentRequirement: leaveType === 'sick' ? 'optional' : 'not_required',
+        documentRequirement:
+          leaveType === 'sick'
+            ? 'optional'
+            : 'not_required',
+
         approvalRouting: {
           designation: null,
           department: 'Engineering',
           grade: null,
-          approverIds: [created.manager._id, created.admin._id],
+          approverIds: [
+            created.manager._id,
+            created.admin._id,
+          ],
         },
       }
     );
   }
 
-  // Addendum 2.1 — an admin-only leave type: no chain at all, decided
-  // directly by any Admin. approverIds stays empty on purpose.
+  // Admin-only unpaid leave
   await upsert(
     LeavePolicy,
     { leaveType: 'unpaid' },
@@ -140,16 +177,27 @@ async function seed() {
       minDaysNoticeRequired: 0,
       documentRequirement: 'optional',
       adminOnlyApproval: true,
-      approvalRouting: { designation: null, department: null, grade: null, approverIds: [] },
+
+      approvalRouting: {
+        designation: null,
+        department: null,
+        grade: null,
+        approverIds: [],
+      },
     }
   );
 
+  console.log('');
   console.log('Seed complete. Log in with any of:');
-  for (const p of people) console.log(`  ${p.email} / ${p.cnic}`);
+
+  for (const p of people) {
+    console.log(`  ${p.email} / ${p.cnic}`);
+  }
+
   process.exit(0);
 }
 
 seed().catch((err) => {
-  console.error(err);
+  console.error('Seed failed:', err);
   process.exit(1);
 });
