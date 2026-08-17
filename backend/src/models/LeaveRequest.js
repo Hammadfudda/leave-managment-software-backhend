@@ -2,73 +2,278 @@ import mongoose from 'mongoose';
 
 const { Schema } = mongoose;
 
-// Spec Part 2.7
 const leaveRequestSchema = new Schema(
   {
-    employeeId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    employeeName: String,
-    department: String,
-    leaveType: { type: String, required: true },
-
-    startDate: { type: Date, required: true },
-    endDate: { type: Date, required: true },
-    totalDaysRequested: { type: Number, required: true }, // raw calendar days
-    totalWorkingDays: { type: Number, required: true }, // after weekend exclusion — this is what's deducted
-    excludedWeekendDates: [{ type: String }], // ISO dates dropped from the count, for display
-
-    reason: { type: String, required: true },
-    attachmentUrl: { type: String },
-    attachmentName: { type: String },
-
-    status: {
-      type: String,
-      enum: ['pending', 'approved', 'rejected', 'cancelled'],
-      default: 'pending',
+    employeeId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
     },
 
-    // Sequential approval tracking — see Part 5.
-    requiredApproverIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
-    approvedByIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
-    rejectedByIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    employeeName: {
+      type: String,
+      required: true,
+    },
 
-    // ADDENDUM 2.1 — copied from policy.adminOnlyApproval at submission time.
-    // When true, requiredApproverIds is empty BY DESIGN and the request must
-    // NOT auto-approve: it sits at 'pending' until an Admin decides it.
-    isAdminOnlyDecision: { type: Boolean, default: false },
+    department: {
+      type: String,
+      required: true,
+    },
 
-    approvalHistory: [
+    leaveType: {
+      type: String,
+      required: true,
+    },
+
+    startDate: {
+      type: Date,
+      required: true,
+    },
+
+    endDate: {
+      type: Date,
+      required: true,
+    },
+
+    totalDaysRequested: {
+      type: Number,
+      required: true,
+    },
+
+    totalWorkingDays: {
+      type: Number,
+      required: true,
+    },
+
+    excludedWeekendDates: [
       {
-        approverId: { type: Schema.Types.ObjectId, ref: 'User' },
-        approverName: String,
-        approverRole: String,
-        action: { type: String, enum: ['approved', 'rejected', 'cancelled'] },
-        comment: String,
-        actionDate: { type: Date, default: Date.now },
+        type: String,
       },
     ],
 
-    // Extension requests — see Part 7.1. A brand new LeaveRequest document, not
-    // a mutation of the original.
-    isExtension: { type: Boolean, default: false },
-    originalRequestId: { type: Schema.Types.ObjectId, ref: 'LeaveRequest', default: null },
-    isPaidOverride: { type: Boolean, default: null },
+    reason: {
+      type: String,
+      required: true,
+    },
 
-    // Stop-early requests — see Part 7.2. Also a brand new document.
-    isStopRequest: { type: Boolean, default: false },
+    /* =====================================================
+       PRIVATE CLOUDINARY ATTACHMENT
 
-    // Populated once a stop-request against this original request is approved.
-    cancelledBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
-    cancelledByName: String,
-    cancelledReason: String,
-    daysUsedBeforeCancel: Number,
-    actualEndDate: Date,
+       Important:
+       - permanent public URL store nahi hoti
+       - sirf Cloudinary asset metadata store hota hai
+       - authorized user ke liye backend temporary URL banayega
+    ===================================================== */
+
+    attachmentName: {
+      type: String,
+      default: null,
+    },
+
+    attachmentPublicId: {
+      type: String,
+      default: null,
+    },
+
+    attachmentResourceType: {
+      type: String,
+
+      enum: [
+        'image',
+        'raw',
+      ],
+
+      default: null,
+    },
+
+    attachmentFormat: {
+      type: String,
+      default: null,
+    },
+
+    attachmentBytes: {
+      type: Number,
+      default: null,
+    },
+
+    attachmentMimeType: {
+      type: String,
+      default: null,
+    },
+
+    attachmentVersion: {
+      type: Number,
+      default: null,
+    },
+
+    /* =====================================================
+       STATUS
+    ===================================================== */
+
+    status: {
+      type: String,
+
+      enum: [
+        'pending',
+        'approved',
+        'rejected',
+        'cancelled',
+      ],
+
+      default: 'pending',
+    },
+
+    /* =====================================================
+       APPROVAL ROUTING
+    ===================================================== */
+
+    requiredApproverIds: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
+
+    approvedByIds: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
+
+    rejectedByIds: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
+
+    isAdminOnlyDecision: {
+      type: Boolean,
+      default: false,
+    },
+
+    approvalHistory: [
+      {
+        approverId: {
+          type: Schema.Types.ObjectId,
+          ref: 'User',
+        },
+
+        approverName: {
+          type: String,
+        },
+
+        approverRole: {
+          type: String,
+        },
+
+        action: {
+          type: String,
+
+          enum: [
+            'approved',
+            'rejected',
+            'cancelled',
+          ],
+        },
+
+        comment: {
+          type: String,
+        },
+
+        actionDate: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
+
+    /* =====================================================
+       EXTENSION
+    ===================================================== */
+
+    isExtension: {
+      type: Boolean,
+      default: false,
+    },
+
+    originalRequestId: {
+      type: Schema.Types.ObjectId,
+      ref: 'LeaveRequest',
+      default: null,
+    },
+
+    isPaidOverride: {
+      type: Boolean,
+      default: null,
+    },
+
+    /* =====================================================
+       STOP LEAVE / CANCELLATION
+    ===================================================== */
+
+    isStopRequest: {
+      type: Boolean,
+      default: false,
+    },
+
+    cancelledBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+
+    cancelledByName: {
+      type: String,
+      default: null,
+    },
+
+    cancelledReason: {
+      type: String,
+      default: null,
+    },
+
+    daysUsedBeforeCancel: {
+      type: Number,
+      default: null,
+    },
+
+    actualEndDate: {
+      type: Date,
+      default: null,
+    },
   },
-  { timestamps: true }
+
+  {
+    timestamps: true,
+  }
 );
 
-leaveRequestSchema.index({ employeeId: 1, status: 1 });
-leaveRequestSchema.index({ requiredApproverIds: 1, status: 1 });
-leaveRequestSchema.index({ originalRequestId: 1 });
-leaveRequestSchema.index({ isAdminOnlyDecision: 1, status: 1 });
+/* =========================================================
+   INDEXES
+========================================================= */
 
-export default mongoose.model('LeaveRequest', leaveRequestSchema);
+leaveRequestSchema.index({
+  employeeId: 1,
+  status: 1,
+});
+
+leaveRequestSchema.index({
+  requiredApproverIds: 1,
+  status: 1,
+});
+
+leaveRequestSchema.index({
+  originalRequestId: 1,
+});
+
+leaveRequestSchema.index({
+  isAdminOnlyDecision: 1,
+  status: 1,
+});
+
+export default mongoose.model(
+  'LeaveRequest',
+  leaveRequestSchema
+);

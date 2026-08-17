@@ -1,31 +1,99 @@
 import multer from 'multer';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
-import cloudinary from '../config/cloudinary.js';
 
-/**
- * Spec Part 6.4 — File uploads never go directly from browser to Cloudinary.
- * An earlier prototype iteration did this and was deliberately reverted,
- * specifically so file-type/size validation can't be bypassed by tampering
- * with client-side code.
- */
-const storage = new CloudinaryStorage({
-  cloudinary,
-  params: { folder: 'leave-attachments', allowed_formats: ['jpg', 'jpeg', 'png', 'pdf'] },
-});
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+/* =========================================================
+   LEAVE ATTACHMENT UPLOAD
+   Allowed:
+   - PDF
+   - JPG / JPEG
+   - PNG
+
+   Max:
+   - 5 MB
+
+   Storage:
+   - Memory only
+   - File Cloudinary par controller upload karega
+========================================================= */
+
+const allowedAttachmentMimeTypes = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+]);
 
 export const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  storage: multer.memoryStorage(),
+
+  limits: {
+    fileSize: MAX_FILE_SIZE,
+  },
+
+  fileFilter: (
+    req,
+    file,
+    cb
+  ) => {
+    if (
+      !allowedAttachmentMimeTypes.has(
+        file.mimetype
+      )
+    ) {
+      return cb(
+        new Error(
+          'Only PDF, JPG, JPEG and PNG files are allowed.'
+        )
+      );
+    }
+
+    cb(null, true);
+  },
 });
 
-/** CSV import stays in memory — it is parsed, never stored. */
+/* =========================================================
+   CSV EMPLOYEE IMPORT
+
+   CSV:
+   - stays in memory
+   - parsed by employee.controller.js
+   - max 5 MB
+========================================================= */
+
 export const uploadCsv = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (!/csv|text\/plain|excel/i.test(file.mimetype) && !/\.csv$/i.test(file.originalname)) {
-      return cb(new Error('Only .csv files are accepted.'));
+
+  limits: {
+    fileSize: MAX_FILE_SIZE,
+  },
+
+  fileFilter: (
+    req,
+    file,
+    cb
+  ) => {
+    const isCsvMime =
+      /csv|text\/plain|excel/i.test(
+        file.mimetype
+      );
+
+    const isCsvExtension =
+      /\.csv$/i.test(
+        file.originalname
+      );
+
+    if (
+      !isCsvMime &&
+      !isCsvExtension
+    ) {
+      return cb(
+        new Error(
+          'Only .csv files are accepted.'
+        )
+      );
     }
+
     cb(null, true);
   },
 });
