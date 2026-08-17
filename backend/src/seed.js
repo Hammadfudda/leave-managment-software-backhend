@@ -37,8 +37,6 @@ async function upsert(Model, where, doc) {
  *
  * IMPORTANT:
  * Existing user's email/password will NOT be overwritten.
- * This prevents manager's real Gmail from being changed back
- * to manager@example.com when npm run seed is run again.
  */
 async function upsertSeedUser({
   grade,
@@ -57,21 +55,25 @@ async function upsertSeedUser({
   if (user) {
     user.fullName = fullName;
 
-    // Preserve existing values if already present
-    user.nationalId = user.nationalId || cnic;
-    user.cnic = user.cnic || cnic;
+    user.nationalId =
+      user.nationalId || cnic;
+
+    user.cnic =
+      user.cnic || cnic;
 
     user.role = role;
     user.gradeId = grade._id;
     user.designation = designation;
     user.department = department;
+
     user.canApproveOtherDepartments =
       canApproveOtherDepartments;
 
     user.status = 'active';
 
     if (!user.dateOfJoining) {
-      user.dateOfJoining = new Date('2024-01-01');
+      user.dateOfJoining =
+        new Date('2024-01-01');
     }
 
     await user.save();
@@ -84,12 +86,16 @@ async function upsertSeedUser({
   }
 
   // First time user creation
-  const passwordHash = await bcrypt.hash(cnic, 10);
+  const passwordHash =
+    await bcrypt.hash(cnic, 10);
 
   user = await User.create({
     fullName,
     email: defaultEmail,
+
     nationalId: cnic,
+    cnic,
+
     passwordHash,
     passwordChangedFromDefault: false,
 
@@ -102,11 +108,11 @@ async function upsertSeedUser({
     canApproveOtherDepartments,
 
     employeeId,
-    cnic,
     designation,
     department,
 
-    dateOfJoining: new Date('2024-01-01'),
+    dateOfJoining:
+      new Date('2024-01-01'),
 
     status: 'active',
   });
@@ -127,11 +133,9 @@ async function seed() {
 
   const grade = await upsert(
     Grade,
-
     {
       name: 'Grade A',
     },
-
     {
       annualLeaveQuota: 20,
       sickLeaveQuota: 10,
@@ -150,11 +154,9 @@ async function seed() {
 
   await upsert(
     Department,
-
     {
       name: 'Engineering',
     },
-
     {
       saturdayOff: true,
     }
@@ -162,11 +164,9 @@ async function seed() {
 
   await upsert(
     Department,
-
     {
       name: 'Operations',
     },
-
     {
       saturdayOff: false,
     }
@@ -213,93 +213,126 @@ async function seed() {
   // ADMIN
   // ============================================================
 
-  const admin = await upsertSeedUser({
-    grade,
+  /**
+   * Admin remains in User collection because the current
+   * User schema requires employee-style fields.
+   *
+   * However:
+   * - Admin will NOT receive leave balances.
+   * - Admin will NOT use employee My Profile UI.
+   * - Admin will NOT apply for normal leave.
+   */
 
-    employeeId: 'NDD-001',
+  const admin =
+    await upsertSeedUser({
+      grade,
 
-    defaultEmail: 'admin@example.com',
+      employeeId: 'NDD-001',
 
-    fullName: 'System Administrator',
+      defaultEmail:
+        'admin@example.com',
 
-    cnic: '11111-1111111-1',
+      fullName:
+        'System Administrator',
 
-    role: 'admin',
+      cnic:
+        '11111-1111111-1',
 
-    designation: 'Chief',
+      role: 'admin',
 
-    department: 'Engineering',
-  });
+      designation: 'Chief',
+
+      department:
+        'Engineering',
+    });
 
   // ============================================================
   // MANAGER
   // ============================================================
 
-  const manager = await upsertSeedUser({
-    grade,
+  const manager =
+    await upsertSeedUser({
+      grade,
 
-    employeeId: 'NDD-002',
+      employeeId: 'NDD-002',
 
-    // IMPORTANT:
-    // This is ONLY used on the very first seed.
-    // Existing manager email will be preserved.
-    defaultEmail: 'manager@example.com',
+      defaultEmail:
+        'manager@example.com',
 
-    fullName: 'Maria Manager',
+      fullName:
+        'Maria Manager',
 
-    cnic: '22222-2222222-2',
+      cnic:
+        '22222-2222222-2',
 
-    role: 'manager',
+      role: 'manager',
 
-    designation: 'Senior Engineer',
+      designation:
+        'Senior Engineer',
 
-    department: 'Engineering',
+      department:
+        'Engineering',
 
-    canApproveOtherDepartments: true,
-  });
+      canApproveOtherDepartments:
+        true,
+    });
 
   // ============================================================
   // EMPLOYEE
   // ============================================================
 
-  const employee = await upsertSeedUser({
-    grade,
+  const employee =
+    await upsertSeedUser({
+      grade,
 
-    employeeId: 'NDD-003',
+      employeeId: 'NDD-003',
 
-    defaultEmail: 'employee@example.com',
+      defaultEmail:
+        'employee@example.com',
 
-    fullName: 'Eddie Employee',
+      fullName:
+        'Eddie Employee',
 
-    cnic: '33333-3333333-3',
+      cnic:
+        '33333-3333333-3',
 
-    role: 'employee',
+      role: 'employee',
 
-    designation: 'Engineer',
+      designation:
+        'Engineer',
 
-    department: 'Engineering',
-  });
+      department:
+        'Engineering',
+    });
 
   // ============================================================
   // MANAGER RELATIONSHIPS
   // ============================================================
 
-  // Manager reports to Admin
+  // Admin has no manager.
+  if (admin.managerId) {
+    admin.managerId = null;
+    await admin.save();
+  }
+
+  // Manager reports to Admin.
   if (
     String(manager.managerId || '') !==
     String(admin._id)
   ) {
-    manager.managerId = admin._id;
+    manager.managerId =
+      admin._id;
 
     await manager.save();
   }
 
-  // Employee reports to Manager
+  // Employee reports to Manager.
   if (
     String(employee.managerId || '') !==
     String(manager._id)
   ) {
-    employee.managerId = manager._id;
+    employee.managerId =
+      manager._id;
 
     await employee.save();
   }
@@ -308,10 +341,15 @@ async function seed() {
   // LEAVE BALANCES
   // ============================================================
 
-  await initializeLeaveBalances(
-    admin._id,
-    grade
-  );
+  /**
+   * IMPORTANT:
+   *
+   * Admin is a system-level account and does NOT
+   * receive personal leave balances.
+   *
+   * Only Manager + Employee participate in
+   * normal leave balances.
+   */
 
   await initializeLeaveBalances(
     manager._id,
@@ -325,20 +363,6 @@ async function seed() {
 
   // ============================================================
   // CORE LEAVE POLICIES
-  //
-  // Annual
-  // Sick
-  // Casual
-  //
-  // FINAL FLOW:
-  //
-  // Employee
-  //    ↓
-  // Assigned Manager
-  //    ↓
-  // FINAL DECISION
-  //
-  // Admin is NOT automatically second approver.
   // ============================================================
 
   for (const leaveType of [
@@ -355,11 +379,11 @@ async function seed() {
       });
 
     const policyData = {
-      applicableRole: 'All Employees',
+      applicableRole:
+        'All Employees',
 
       isPaid: true,
 
-      // Minimum notice disabled
       minDaysNoticeRequired: 0,
 
       documentRequirement:
@@ -367,29 +391,26 @@ async function seed() {
           ? 'optional'
           : 'not_required',
 
-      // Not Admin-only
       adminOnlyApproval: false,
 
-      // Manager is FINAL decision maker
+      /**
+       * Assigned Manager makes the FINAL decision.
+       */
       finalApprovalMode: true,
 
       approvalRouting: {
         designation: null,
 
-        department: 'Engineering',
+        department:
+          'Engineering',
 
         grade: null,
 
         /**
-         * IMPORTANT:
+         * Do NOT hard-code manager IDs.
          *
-         * No hard-coded manager/admin IDs.
-         *
-         * Backend should resolve:
-         *
-         * employee.managerId
-         *
-         * when leave request is created.
+         * Backend resolves employee.managerId
+         * when the request is created.
          */
         approverIds: [],
       },
@@ -420,26 +441,25 @@ async function seed() {
     });
 
   const unpaidPolicy = {
-    applicableRole: 'All Employees',
+    applicableRole:
+      'All Employees',
 
     isPaid: false,
 
     minDaysNoticeRequired: 0,
 
-    documentRequirement: 'optional',
+    documentRequirement:
+      'optional',
 
-    // Keep unpaid as Admin-only
+    // Unpaid leave remains Admin-only.
     adminOnlyApproval: true,
 
     finalApprovalMode: false,
 
     approvalRouting: {
       designation: null,
-
       department: null,
-
       grade: null,
-
       approverIds: [],
     },
   };
@@ -454,7 +474,6 @@ async function seed() {
   } else {
     await LeavePolicy.create({
       leaveType: 'unpaid',
-
       ...unpaidPolicy,
     });
   }
@@ -464,9 +483,15 @@ async function seed() {
   // ============================================================
 
   console.log('');
-  console.log('================================');
-  console.log('SEED COMPLETE');
-  console.log('================================');
+  console.log(
+    '================================'
+  );
+  console.log(
+    'SEED COMPLETE'
+  );
+  console.log(
+    '================================'
+  );
   console.log('');
 
   console.log('Current users:');
@@ -482,6 +507,16 @@ async function seed() {
 
   console.log(
     `Employee: ${employee.email}`
+  );
+
+  console.log('');
+
+  console.log(
+    'Admin: system-level account (no personal leave balance).'
+  );
+
+  console.log(
+    'Manager + Employee: normal leave balance users.'
   );
 
   console.log('');
