@@ -14,18 +14,10 @@ import {
 
 const router = Router();
 
-/* =========================================================
-   AUTH
-========================================================= */
-
 router.use(
   authenticate,
   loadUser
 );
-
-/* =========================================================
-   LEAVE TYPES / BALANCE
-========================================================= */
 
 router.get(
   '/available-types',
@@ -37,30 +29,10 @@ router.get(
   leave.getBalance
 );
 
-/* =========================================================
-   LEAVE REQUEST LIST
-========================================================= */
-
 router.get(
   '/',
   leave.listLeaveRequests
 );
-
-/* =========================================================
-   CREATE LEAVE REQUEST
-   Employee / Manager only
-
-   multipart/form-data:
-   - leaveType
-   - startDate
-   - endDate
-   - reason
-   - attachment (optional / required by policy)
-
-   Attachment:
-   PDF / JPG / JPEG / PNG
-   Max 5 MB
-========================================================= */
 
 router.post(
   '/',
@@ -74,32 +46,15 @@ router.post(
   leave.createLeaveRequest
 );
 
-/* =========================================================
-   PRIVATE ATTACHMENT URL
-
-   Backend authorization check ke baad
-   temporary signed Cloudinary URL return hoga.
-
-   Permanent public URL expose nahi hogi.
-========================================================= */
-
 router.get(
   '/:id/attachment-url',
   leave.getAttachmentUrl
 );
 
-/* =========================================================
-   SINGLE LEAVE REQUEST
-========================================================= */
-
 router.get(
   '/:id',
   leave.getLeaveRequest
 );
-
-/* =========================================================
-   APPROVE
-========================================================= */
 
 router.patch(
   '/:id/approve',
@@ -110,10 +65,6 @@ router.patch(
   leave.approve
 );
 
-/* =========================================================
-   REJECT
-========================================================= */
-
 router.patch(
   '/:id/reject',
   authorize(
@@ -123,10 +74,6 @@ router.patch(
   leave.reject
 );
 
-/* =========================================================
-   ADMIN ACT ON BEHALF
-========================================================= */
-
 router.patch(
   '/:id/act-on-behalf',
   authorize(
@@ -134,10 +81,6 @@ router.patch(
   ),
   leave.actOnBehalfOf
 );
-
-/* =========================================================
-   EXTEND LEAVE
-========================================================= */
 
 router.post(
   '/:id/extend',
@@ -147,10 +90,6 @@ router.post(
   ),
   leave.extendLeave
 );
-
-/* =========================================================
-   STOP / EARLY RETURN REQUEST
-========================================================= */
 
 router.post(
   '/:id/request-stop',

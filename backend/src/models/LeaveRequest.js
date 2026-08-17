@@ -56,15 +56,6 @@ const leaveRequestSchema = new Schema(
       required: true,
     },
 
-    /* =====================================================
-       PRIVATE CLOUDINARY ATTACHMENT
-
-       Important:
-       - permanent public URL store nahi hoti
-       - sirf Cloudinary asset metadata store hota hai
-       - authorized user ke liye backend temporary URL banayega
-    ===================================================== */
-
     attachmentName: {
       type: String,
       default: null,
@@ -77,12 +68,10 @@ const leaveRequestSchema = new Schema(
 
     attachmentResourceType: {
       type: String,
-
       enum: [
         'image',
         'raw',
       ],
-
       default: null,
     },
 
@@ -106,10 +95,6 @@ const leaveRequestSchema = new Schema(
       default: null,
     },
 
-    /* =====================================================
-       STATUS
-    ===================================================== */
-
     status: {
       type: String,
 
@@ -122,10 +107,6 @@ const leaveRequestSchema = new Schema(
 
       default: 'pending',
     },
-
-    /* =====================================================
-       APPROVAL ROUTING
-    ===================================================== */
 
     requiredApproverIds: [
       {
@@ -160,13 +141,9 @@ const leaveRequestSchema = new Schema(
           ref: 'User',
         },
 
-        approverName: {
-          type: String,
-        },
+        approverName: String,
 
-        approverRole: {
-          type: String,
-        },
+        approverRole: String,
 
         action: {
           type: String,
@@ -178,9 +155,7 @@ const leaveRequestSchema = new Schema(
           ],
         },
 
-        comment: {
-          type: String,
-        },
+        comment: String,
 
         actionDate: {
           type: Date,
@@ -188,10 +163,6 @@ const leaveRequestSchema = new Schema(
         },
       },
     ],
-
-    /* =====================================================
-       EXTENSION
-    ===================================================== */
 
     isExtension: {
       type: Boolean,
@@ -208,10 +179,6 @@ const leaveRequestSchema = new Schema(
       type: Boolean,
       default: null,
     },
-
-    /* =====================================================
-       STOP LEAVE / CANCELLATION
-    ===================================================== */
 
     isStopRequest: {
       type: Boolean,
@@ -249,10 +216,6 @@ const leaveRequestSchema = new Schema(
     timestamps: true,
   }
 );
-
-/* =========================================================
-   INDEXES
-========================================================= */
 
 leaveRequestSchema.index({
   employeeId: 1,

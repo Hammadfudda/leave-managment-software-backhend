@@ -2,21 +2,6 @@ import multer from 'multer';
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
-/* =========================================================
-   LEAVE ATTACHMENT UPLOAD
-   Allowed:
-   - PDF
-   - JPG / JPEG
-   - PNG
-
-   Max:
-   - 5 MB
-
-   Storage:
-   - Memory only
-   - File Cloudinary par controller upload karega
-========================================================= */
-
 const allowedAttachmentMimeTypes = new Set([
   'application/pdf',
   'image/jpeg',
@@ -51,15 +36,6 @@ export const upload = multer({
     cb(null, true);
   },
 });
-
-/* =========================================================
-   CSV EMPLOYEE IMPORT
-
-   CSV:
-   - stays in memory
-   - parsed by employee.controller.js
-   - max 5 MB
-========================================================= */
 
 export const uploadCsv = multer({
   storage: multer.memoryStorage(),
