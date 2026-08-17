@@ -1,4 +1,5 @@
 import { Router } from 'express';
+
 import authRoutes from './auth.routes.js';
 import employeeRoutes from './employee.routes.js';
 import leaveRoutes from './leave.routes.js';
@@ -6,17 +7,28 @@ import policyRoutes from './policy.routes.js';
 import teamRoutes from './team.routes.js';
 import notificationRoutes from './notification.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
+
 import {
   gradeRoutes,
   departmentRoutes,
   designationRoutes,
   roleRoutes,
 } from './taxonomy.routes.js';
-import { reportRoutes, calendarRoutes, auditRoutes } from './misc.routes.js';
+
+import {
+  reportRoutes,
+  calendarRoutes,
+  auditRoutes,
+} from './misc.routes.js';
 
 const router = Router();
 
-router.get('/health', (req, res) => res.json({ success: true, status: 'ok' }));
+router.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    status: 'ok',
+  });
+});
 
 router.use('/auth', authRoutes);
 router.use('/employees', employeeRoutes);
