@@ -1,58 +1,167 @@
 import LeavePolicy from '../models/LeavePolicy.js';
 import User from '../models/User.js';
 
-/**
- * Spec Part 6.1 — Applicant scope enforcement (grade & role).
- * approvalRouting.grade/department/designation describe WHO THE POLICY APPLIES
- * TO. They are completely independent of approverIds (who approves it) — an
- * earlier draft conflated the two and it was a real, shipped bug.
- */
-export async function getAvailableLeaveTypesForUser(user) {
-  const policies = await LeavePolicy.find({});
-  return policies
-    .filter((p) => {
-      if (p.approvalRouting?.grade && String(user.gradeId) !== p.approvalRouting.grade) return false;
-      if (
-        p.applicableRole &&
-        p.applicableRole !== 'All Employees' &&
-        p.applicableRole !== user.role
-      ) {
-        return false;
-      }
-      return true;
-    })
-    .map((p) => p.leaveType);
-}
+/*
+|--------------------------------------------------------------------------
+| POLICY APPLICANT SCOPE
+|--------------------------------------------------------------------------
+|
+| approvalRouting.grade / department / designation determine
+| WHO the policy applies to.
+|
+| approvalRouting.approverIds determines WHO approves it.
+|
+| These are completely separate concepts.
+|
+*/
 
-/**
- * Re-validated at submission time — the dropdown filtering the frontend shows
- * is a convenience, not a security boundary. Returns an error message string,
- * or null when the policy is available to this user.
- */
-export function checkApplicantScope(policy, user) {
-  if (policy.approvalRouting?.grade && String(user.gradeId) !== policy.approvalRouting.grade) {
+export function checkApplicantScope(
+  policy,
+  user
+) {
+  const routing =
+    policy.approvalRouting || {};
+
+  /*
+   * GRADE
+   *
+   * Policy stores Grade MongoDB ID as string.
+   * User stores gradeId as ObjectId.
+   */
+  if (
+    routing.grade &&
+    String(user.gradeId) !==
+      String(routing.grade)
+  ) {
     return 'This leave type is not available for your grade.';
   }
+
+  /*
+   * DEPARTMENT
+   */
+  if (
+    routing.department &&
+    routing.department !==
+      user.department
+  ) {
+    return 'This leave type is not available for your department.';
+  }
+
+  /*
+   * DESIGNATION
+   */
+  if (
+    routing.designation &&
+    routing.designation !==
+      user.designation
+  ) {
+    return 'This leave type is not available for your designation.';
+  }
+
+  /*
+   * ROLE
+   */
   if (
     policy.applicableRole &&
-    policy.applicableRole !== 'All Employees' &&
-    policy.applicableRole !== user.role
+    policy.applicableRole !==
+      'All Employees' &&
+    policy.applicableRole !==
+      user.role
   ) {
     return 'This leave type is not available for your role.';
   }
+
   return null;
 }
 
-/** Spec Part 6.2 — Cross-department approver eligibility. */
-export async function getEligibleApprovers(policyDepartmentFilter) {
-  const candidates = await User.find({
-    role: { $in: ['manager', 'admin'] },
-    status: 'active',
-  });
-  return candidates.filter((u) => {
-    if (u.role === 'admin') return true;
-    if (!policyDepartmentFilter || policyDepartmentFilter === 'All Departments') return true;
-    if (u.department === policyDepartmentFilter) return true;
-    return u.canApproveOtherDepartments === true;
-  });
+/*
+|--------------------------------------------------------------------------
+| AVAILABLE LEAVE TYPES FOR EMPLOYEE
+|--------------------------------------------------------------------------
+*/
+
+export async function getAvailableLeaveTypesForUser(
+  user
+) {
+  const policies =
+    await LeavePolicy.find({});
+
+  const matchingPolicies =
+    policies.filter(
+      (policy) =>
+        checkApplicantScope(
+          policy,
+          user
+        ) === null
+    );
+
+  /*
+   * Same leave type may have multiple policies:
+   *
+   * Annual + Grade A
+   * Annual + Grade B
+   *
+   * Employee only needs "annual" once in dropdown.
+   */
+  return [
+    ...new Set(
+      matchingPolicies.map(
+        (policy) =>
+          policy.leaveType
+      )
+    ),
+  ];
+}
+
+/*
+|--------------------------------------------------------------------------
+| ELIGIBLE APPROVERS
+|--------------------------------------------------------------------------
+*/
+
+export async function getEligibleApprovers(
+  policyDepartmentFilter
+) {
+  const candidates =
+    await User.find({
+      role: {
+        $in: [
+          'manager',
+          'admin',
+        ],
+      },
+
+      status: 'active',
+    });
+
+  return candidates.filter(
+    (user) => {
+      if (
+        user.role ===
+        'admin'
+      ) {
+        return true;
+      }
+
+      if (
+        !policyDepartmentFilter ||
+        policyDepartmentFilter ===
+          'All Departments'
+      ) {
+        return true;
+      }
+
+      if (
+        user.department ===
+        policyDepartmentFilter
+      ) {
+        return true;
+      }
+
+      return (
+        user.canApproveOtherDepartments ===
+        true
+      );
+    }
+  );
 }
