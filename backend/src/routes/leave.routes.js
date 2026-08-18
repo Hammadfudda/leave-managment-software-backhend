@@ -3,6 +3,10 @@ import { Router } from 'express';
 import * as leave from '../controllers/leave.controller.js';
 
 import {
+  listAvailablePolicies,
+} from '../controllers/availablePolicies.controller.js';
+
+import {
   authenticate,
   authorize,
   loadUser,
@@ -22,6 +26,11 @@ router.use(
 router.get(
   '/available-types',
   leave.listAvailableLeaveTypes
+);
+
+router.get(
+  '/available-policies',
+  listAvailablePolicies
 );
 
 router.get(

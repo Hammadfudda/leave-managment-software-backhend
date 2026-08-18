@@ -1,83 +1,31 @@
 import LeavePolicy from '../models/LeavePolicy.js';
 import User from '../models/User.js';
 
-function isAll(value, allLabel) {
+/*
+|--------------------------------------------------------------------------
+| POLICY APPLICANT SCOPE
+|--------------------------------------------------------------------------
+|
+| approvalRouting.grade / department / designation determine
+| WHO the policy applies to.
+|
+| approvalRouting.approverIds determines WHO approves it.
+|
+| "All Grades", "All Departments", "All Designations",
+| null and empty values are treated as wildcards.
+|
+*/
+
+function isWildcard(
+  value,
+  allLabel
+) {
   return (
     value === null ||
     value === undefined ||
     value === '' ||
     value === allLabel
   );
-}
-
-function policyMatchesUser(policy, user) {
-  const routing =
-    policy.approvalRouting || {};
-
-  if (
-    !isAll(routing.grade, 'All Grades') &&
-    String(user.gradeId) !==
-      String(routing.grade)
-  ) {
-    return false;
-  }
-
-  if (
-    !isAll(
-      routing.department,
-      'All Departments'
-    ) &&
-    user.department !==
-      routing.department
-  ) {
-    return false;
-  }
-
-  if (
-    !isAll(
-      routing.designation,
-      'All Designations'
-    ) &&
-    user.designation !==
-      routing.designation
-  ) {
-    return false;
-  }
-
-  if (
-    policy.applicableRole &&
-    policy.applicableRole !==
-      'All Employees' &&
-    policy.applicableRole !==
-      user.role
-  ) {
-    return false;
-  }
-
-  return true;
-}
-
-export async function getAvailableLeaveTypesForUser(
-  user
-) {
-  const policies =
-    await LeavePolicy.find({});
-
-  return [
-    ...new Set(
-      policies
-        .filter((policy) =>
-          policyMatchesUser(
-            policy,
-            user
-          )
-        )
-        .map(
-          (policy) =>
-            policy.leaveType
-        )
-    ),
-  ];
 }
 
 export function checkApplicantScope(
@@ -87,36 +35,56 @@ export function checkApplicantScope(
   const routing =
     policy.approvalRouting || {};
 
+  /*
+   * GRADE
+   *
+   * Specific grade stores Grade MongoDB ID.
+   * "All Grades" means every grade.
+   */
   if (
-    !isAll(routing.grade, 'All Grades') &&
+    !isWildcard(
+      routing.grade,
+      'All Grades'
+    ) &&
     String(user.gradeId) !==
-      String(routing.grade)
+      String(
+        routing.grade
+      )
   ) {
     return 'This leave type is not available for your grade.';
   }
 
+  /*
+   * DEPARTMENT
+   */
   if (
-    !isAll(
+    !isWildcard(
       routing.department,
       'All Departments'
     ) &&
-    user.department !==
-      routing.department
+    routing.department !==
+      user.department
   ) {
     return 'This leave type is not available for your department.';
   }
 
+  /*
+   * DESIGNATION
+   */
   if (
-    !isAll(
+    !isWildcard(
       routing.designation,
       'All Designations'
     ) &&
-    user.designation !==
-      routing.designation
+    routing.designation !==
+      user.designation
   ) {
     return 'This leave type is not available for your designation.';
   }
 
+  /*
+   * ROLE
+   */
   if (
     policy.applicableRole &&
     policy.applicableRole !==
@@ -130,6 +98,41 @@ export function checkApplicantScope(
   return null;
 }
 
+/*
+|--------------------------------------------------------------------------
+| AVAILABLE LEAVE TYPES FOR EMPLOYEE
+|--------------------------------------------------------------------------
+*/
+export async function getAvailableLeaveTypesForUser(
+  user
+) {
+  const policies =
+    await LeavePolicy.find({});
+
+  const matchingPolicies =
+    policies.filter(
+      (policy) =>
+        checkApplicantScope(
+          policy,
+          user
+        ) === null
+    );
+
+  return [
+    ...new Set(
+      matchingPolicies.map(
+        (policy) =>
+          policy.leaveType
+      )
+    ),
+  ];
+}
+
+/*
+|--------------------------------------------------------------------------
+| ELIGIBLE APPROVERS
+|--------------------------------------------------------------------------
+*/
 export async function getEligibleApprovers(
   policyDepartmentFilter
 ) {
@@ -147,7 +150,8 @@ export async function getEligibleApprovers(
   return candidates.filter(
     (user) => {
       if (
-        user.role === 'admin'
+        user.role ===
+        'admin'
       ) {
         return true;
       }
