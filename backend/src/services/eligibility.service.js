@@ -103,45 +103,8 @@ export async function getAvailableLeaveTypesForUser(
 export async function getEligibleApprovers(
   policyDepartmentFilter
 ) {
-  const candidates =
-    await User.find({
-      role: {
-        $in: [
-          'manager',
-          'admin',
-        ],
-      },
-      status: 'active',
-    });
+  const candidates = await User.find({ role: 'manager', status: 'active' });
 
-  return candidates.filter(
-    (user) => {
-      if (
-        user.role ===
-        'admin'
-      ) {
-        return true;
-      }
+  return candidates;
 
-      if (
-        !policyDepartmentFilter ||
-        policyDepartmentFilter ===
-          'All Departments'
-      ) {
-        return true;
-      }
-
-      if (
-        user.department ===
-        policyDepartmentFilter
-      ) {
-        return true;
-      }
-
-      return (
-        user.canApproveOtherDepartments ===
-        true
-      );
-    }
-  );
 }

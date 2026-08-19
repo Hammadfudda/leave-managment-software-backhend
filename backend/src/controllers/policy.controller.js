@@ -157,7 +157,6 @@ async function validateApprovers(
         },
         role: {
           $in: [
-            'admin',
             'manager',
           ],
         },
@@ -366,8 +365,7 @@ export const createPolicy =
       const approvalRouting =
         normalizeRouting(
           req.body,
-          adminOnlyApproval ||
-            finalApprovalMode
+          finalApprovalMode
         );
 
       await validateGrade(
@@ -375,7 +373,6 @@ export const createPolicy =
       );
 
       if (
-        !adminOnlyApproval &&
         !finalApprovalMode &&
         approvalRouting
           .approverIds
@@ -423,8 +420,7 @@ export const createPolicy =
                 .documentRequirement ||
               'optional',
 
-            adminOnlyApproval,
-
+            
             finalApprovalMode,
 
             approvalRouting,
@@ -610,7 +606,6 @@ export const updatePolicy =
       );
 
       if (
-        !adminOnlyApproval &&
         !finalApprovalMode &&
         approvalRouting
           .approverIds
@@ -667,10 +662,7 @@ export const updatePolicy =
             .documentRequirement;
       }
 
-      policy.adminOnlyApproval =
-        adminOnlyApproval;
-
-      policy.finalApprovalMode =
+            policy.finalApprovalMode =
         finalApprovalMode;
 
       policy.approvalRouting =
