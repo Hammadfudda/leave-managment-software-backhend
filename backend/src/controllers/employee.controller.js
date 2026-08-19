@@ -23,7 +23,6 @@ import {
   initializeLeaveBalances,
   syncQuotasToGrade,
   getLeaveBalancesForUser,
-  CORE_LEAVE_TYPES,
 } from '../services/balance.service.js';
 
 import {
@@ -1403,7 +1402,11 @@ export const exportEmployeesCsv =
         );
 
       const leaveTypes =
-        CORE_LEAVE_TYPES;
+  (
+    await LeavePolicy.distinct(
+      'leaveType'
+    )
+  ).sort();
 
       const rows =
         await Promise.all(
