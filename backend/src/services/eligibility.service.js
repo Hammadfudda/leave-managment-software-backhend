@@ -1,21 +1,6 @@
 import LeavePolicy from '../models/LeavePolicy.js';
 import User from '../models/User.js';
 
-/*
-|--------------------------------------------------------------------------
-| POLICY APPLICANT SCOPE
-|--------------------------------------------------------------------------
-|
-| approvalRouting.grade / department / designation determine
-| WHO the policy applies to.
-|
-| approvalRouting.approverIds determines WHO approves it.
-|
-| "All Grades", "All Departments", "All Designations",
-| null and empty values are treated as wildcards.
-|
-*/
-
 function isWildcard(
   value,
   allLabel
@@ -33,20 +18,17 @@ export function checkApplicantScope(
   user
 ) {
   const routing =
-    policy.approvalRouting || {};
+    policy.approvalRouting ||
+    {};
 
-  /*
-   * GRADE
-   *
-   * Specific grade stores Grade MongoDB ID.
-   * "All Grades" means every grade.
-   */
   if (
     !isWildcard(
       routing.grade,
       'All Grades'
     ) &&
-    String(user.gradeId) !==
+    String(
+      user.gradeId
+    ) !==
       String(
         routing.grade
       )
@@ -54,9 +36,6 @@ export function checkApplicantScope(
     return 'This leave type is not available for your grade.';
   }
 
-  /*
-   * DEPARTMENT
-   */
   if (
     !isWildcard(
       routing.department,
@@ -68,9 +47,6 @@ export function checkApplicantScope(
     return 'This leave type is not available for your department.';
   }
 
-  /*
-   * DESIGNATION
-   */
   if (
     !isWildcard(
       routing.designation,
@@ -82,9 +58,6 @@ export function checkApplicantScope(
     return 'This leave type is not available for your designation.';
   }
 
-  /*
-   * ROLE
-   */
   if (
     policy.applicableRole &&
     policy.applicableRole !==
@@ -98,29 +71,28 @@ export function checkApplicantScope(
   return null;
 }
 
-/*
-|--------------------------------------------------------------------------
-| AVAILABLE LEAVE TYPES FOR EMPLOYEE
-|--------------------------------------------------------------------------
-*/
 export async function getAvailableLeaveTypesForUser(
   user
 ) {
   const policies =
     await LeavePolicy.find({});
 
-  const matchingPolicies =
+  const matching =
     policies.filter(
       (policy) =>
         checkApplicantScope(
           policy,
           user
-        ) === null
+        ) === null &&
+        Number(
+          policy.yearlyQuota ??
+            0
+        ) > 0
     );
 
   return [
     ...new Set(
-      matchingPolicies.map(
+      matching.map(
         (policy) =>
           policy.leaveType
       )
@@ -128,11 +100,6 @@ export async function getAvailableLeaveTypesForUser(
   ];
 }
 
-/*
-|--------------------------------------------------------------------------
-| ELIGIBLE APPROVERS
-|--------------------------------------------------------------------------
-*/
 export async function getEligibleApprovers(
   policyDepartmentFilter
 ) {

@@ -20,17 +20,15 @@ import {
 } from '../services/eligibility.service.js';
 
 import {
+  syncCurrentYearBalancesForAllEmployees,
+} from '../services/balance.service.js';
+
+import {
   getPagination,
   paginated,
 } from '../utils/pagination.js';
 
-/*
-|--------------------------------------------------------------------------
-| NORMALIZE STRING
-|--------------------------------------------------------------------------
-*/
-
-function normalizeOptionalString(
+function optionalString(
   value
 ) {
   if (
@@ -43,21 +41,28 @@ function normalizeOptionalString(
   const text =
     String(value).trim();
 
-  return text || null;
-}
+  if (
+    !text ||
+    text ===
+      'All Grades' ||
+    text ===
+      'All Departments' ||
+    text ===
+      'All Designations'
+  ) {
+    return null;
+  }
 
-/*
-|--------------------------------------------------------------------------
-| NORMALIZE ROUTING
-|--------------------------------------------------------------------------
-*/
+  return text;
+}
 
 function normalizeRouting(
   body,
   disableApprovers
 ) {
   const routing =
-    body.approvalRouting || {};
+    body.approvalRouting ||
+    {};
 
   const approverIds =
     disableApprovers ||
@@ -65,44 +70,54 @@ function normalizeRouting(
       routing.approverIds
     )
       ? []
-      : routing.approverIds;
+      : [
+          ...new Set(
+            routing
+              .approverIds
+              .map(String)
+              .filter(Boolean)
+          ),
+        ];
 
   return {
-    designation:
-      normalizeOptionalString(
-        routing.designation
-      ),
-
-    department:
-      normalizeOptionalString(
-        routing.department
-      ),
-
-    /*
-     * IMPORTANT:
-     * grade stores the Grade MongoDB ID,
-     * not "Grade A" text.
-     */
     grade:
-      normalizeOptionalString(
+      optionalString(
         routing.grade
       ),
 
-    approverIds: [
-      ...new Set(
-        approverIds
-          .map(String)
-          .filter(Boolean)
+    department:
+      optionalString(
+        routing.department
       ),
-    ],
+
+    designation:
+      optionalString(
+        routing.designation
+      ),
+
+    approverIds,
   };
 }
 
-/*
-|--------------------------------------------------------------------------
-| VALIDATE GRADE
-|--------------------------------------------------------------------------
-*/
+function normalizeQuota(
+  value
+) {
+  const quota =
+    Number(value);
+
+  if (
+    !Number.isFinite(
+      quota
+    ) ||
+    quota <= 0
+  ) {
+    throw new ValidationError(
+      'Yearly quota must be greater than 0.'
+    );
+  }
+
+  return quota;
+}
 
 async function validateGrade(
   gradeId
@@ -123,12 +138,6 @@ async function validateGrade(
   }
 }
 
-/*
-|--------------------------------------------------------------------------
-| VALIDATE APPROVERS
-|--------------------------------------------------------------------------
-*/
-
 async function validateApprovers(
   approverIds
 ) {
@@ -139,26 +148,26 @@ async function validateApprovers(
     return;
   }
 
-  const approvers =
-    await User.find({
-      _id: {
-        $in:
-          approverIds,
-      },
-
-      role: {
-        $in: [
-          'admin',
-          'manager',
-        ],
-      },
-
-      status:
-        'active',
-    });
+  const count =
+    await User.countDocuments(
+      {
+        _id: {
+          $in:
+            approverIds,
+        },
+        role: {
+          $in: [
+            'admin',
+            'manager',
+          ],
+        },
+        status:
+          'active',
+      }
+    );
 
   if (
-    approvers.length !==
+    count !==
     approverIds.length
   ) {
     throw new ValidationError(
@@ -167,26 +176,7 @@ async function validateApprovers(
   }
 }
 
-/*
-|--------------------------------------------------------------------------
-| DUPLICATE POLICY CHECK
-|--------------------------------------------------------------------------
-|
-| Duplicate means same:
-|
-| leaveType
-| applicableRole
-| grade
-| department
-| designation
-|
-| Approval method/document settings may differ,
-| but the same applicant scope should not have
-| two competing policies.
-|
-*/
-
-async function ensureNoDuplicatePolicy({
+async function noDuplicate({
   leaveType,
   applicableRole,
   approvalRouting,
@@ -195,9 +185,7 @@ async function ensureNoDuplicatePolicy({
   const filter = {
     leaveType,
 
-    applicableRole:
-      applicableRole ||
-      'All Employees',
+    applicableRole,
 
     'approvalRouting.grade':
       approvalRouting.grade ||
@@ -231,12 +219,6 @@ async function ensureNoDuplicatePolicy({
   }
 }
 
-/*
-|--------------------------------------------------------------------------
-| LIST POLICIES
-|--------------------------------------------------------------------------
-*/
-
 export const listPolicies =
   asyncHandler(
     async (
@@ -253,26 +235,26 @@ export const listPolicies =
         filter[
           'approvalRouting.approverIds'
         ] =
-          req.currentUser._id;
+          req.currentUser
+            ._id;
       }
 
       if (
-        req.query
-          .department
+        req.query.department
       ) {
         filter[
           'approvalRouting.department'
         ] =
-          req.query
-            .department;
+          req.query.department;
       }
 
       if (
-        req.query
-          .leaveType
+        req.query.leaveType
       ) {
         filter.leaveType =
-          req.query.leaveType;
+          String(
+            req.query.leaveType
+          ).toLowerCase();
       }
 
       if (
@@ -302,8 +284,7 @@ export const listPolicies =
               'fullName email role department designation'
             )
             .sort({
-              createdAt:
-                -1,
+              createdAt: -1,
             })
             .skip(
               pagination.skip
@@ -312,14 +293,14 @@ export const listPolicies =
               pagination.limit
             ),
 
-          LeavePolicy.countDocuments(
-            filter
-          ),
+          LeavePolicy
+            .countDocuments(
+              filter
+            ),
         ]);
 
       res.json({
         success: true,
-
         ...paginated(
           items,
           total,
@@ -328,12 +309,6 @@ export const listPolicies =
       });
     }
   );
-
-/*
-|--------------------------------------------------------------------------
-| CREATE POLICY
-|--------------------------------------------------------------------------
-*/
 
 export const createPolicy =
   asyncHandler(
@@ -355,6 +330,12 @@ export const createPolicy =
           'Leave type is required.'
         );
       }
+
+      const yearlyQuota =
+        normalizeQuota(
+          req.body
+            .yearlyQuota
+        );
 
       const applicableRole =
         req.body
@@ -385,7 +366,6 @@ export const createPolicy =
       const approvalRouting =
         normalizeRouting(
           req.body,
-
           adminOnlyApproval ||
             finalApprovalMode
         );
@@ -411,7 +391,7 @@ export const createPolicy =
           .approverIds
       );
 
-      await ensureNoDuplicatePolicy({
+      await noDuplicate({
         leaveType,
         applicableRole,
         approvalRouting,
@@ -422,11 +402,12 @@ export const createPolicy =
           {
             leaveType,
 
+            yearlyQuota,
+
             applicableRole,
 
             isPaid:
-              req.body
-                .isPaid !==
+              req.body.isPaid !==
               undefined
                 ? Boolean(
                     req.body
@@ -434,11 +415,6 @@ export const createPolicy =
                   )
                 : true,
 
-            /*
-             * Notice period removed.
-             * Keep DB field zero only for
-             * backwards compatibility.
-             */
             minDaysNoticeRequired:
               0,
 
@@ -455,10 +431,11 @@ export const createPolicy =
           }
         );
 
+      await syncCurrentYearBalancesForAllEmployees();
+
       await audit({
         actorId:
-          req.currentUser
-            ._id,
+          req.currentUser._id,
 
         actorName:
           req.currentUser
@@ -481,7 +458,7 @@ export const createPolicy =
             .department,
 
         details:
-          `Created ${policy.leaveType} policy`,
+          `Created ${policy.leaveType} policy with yearly quota ${policy.yearlyQuota}`,
       });
 
       res
@@ -493,12 +470,6 @@ export const createPolicy =
     }
   );
 
-/*
-|--------------------------------------------------------------------------
-| UPDATE POLICY
-|--------------------------------------------------------------------------
-*/
-
 export const updatePolicy =
   asyncHandler(
     async (
@@ -506,9 +477,10 @@ export const updatePolicy =
       res
     ) => {
       const policy =
-        await LeavePolicy.findById(
-          req.params.id
-        );
+        await LeavePolicy
+          .findById(
+            req.params.id
+          );
 
       if (!policy) {
         throw new NotFoundError(
@@ -517,8 +489,7 @@ export const updatePolicy =
       }
 
       const leaveType =
-        req.body
-          .leaveType !==
+        req.body.leaveType !==
         undefined
           ? String(
               req.body
@@ -528,13 +499,26 @@ export const updatePolicy =
               .toLowerCase()
           : policy.leaveType;
 
+      const yearlyQuota =
+        req.body
+          .yearlyQuota !==
+        undefined
+          ? normalizeQuota(
+              req.body
+                .yearlyQuota
+            )
+          : normalizeQuota(
+              policy.yearlyQuota
+            );
+
       const applicableRole =
         req.body
           .applicableRole !==
         undefined
           ? req.body
               .applicableRole
-          : policy.applicableRole;
+          : policy
+              .applicableRole;
 
       const adminOnlyApproval =
         req.body
@@ -545,7 +529,8 @@ export const updatePolicy =
                 .adminOnlyApproval
             )
           : Boolean(
-              policy.adminOnlyApproval
+              policy
+                .adminOnlyApproval
             );
 
       const finalApprovalMode =
@@ -557,7 +542,8 @@ export const updatePolicy =
                 .finalApprovalMode
             )
           : Boolean(
-              policy.finalApprovalMode
+              policy
+                .finalApprovalMode
             );
 
       if (
@@ -570,10 +556,10 @@ export const updatePolicy =
       }
 
       let approvalRouting = {
-        designation:
+        grade:
           policy
             .approvalRouting
-            ?.designation ||
+            ?.grade ||
           null,
 
         department:
@@ -582,10 +568,10 @@ export const updatePolicy =
             ?.department ||
           null,
 
-        grade:
+        designation:
           policy
             .approvalRouting
-            ?.grade ||
+            ?.designation ||
           null,
 
         approverIds:
@@ -605,7 +591,6 @@ export const updatePolicy =
         approvalRouting =
           normalizeRouting(
             req.body,
-
             adminOnlyApproval ||
               finalApprovalMode
           );
@@ -615,7 +600,8 @@ export const updatePolicy =
         adminOnlyApproval ||
         finalApprovalMode
       ) {
-        approvalRouting.approverIds =
+        approvalRouting
+          .approverIds =
           [];
       }
 
@@ -640,7 +626,7 @@ export const updatePolicy =
           .approverIds
       );
 
-      await ensureNoDuplicatePolicy({
+      await noDuplicate({
         leaveType,
         applicableRole,
         approvalRouting,
@@ -651,6 +637,9 @@ export const updatePolicy =
       policy.leaveType =
         leaveType;
 
+      policy.yearlyQuota =
+        yearlyQuota;
+
       policy.applicableRole =
         applicableRole;
 
@@ -660,13 +649,11 @@ export const updatePolicy =
       ) {
         policy.isPaid =
           Boolean(
-            req.body.isPaid
+            req.body
+              .isPaid
           );
       }
 
-      /*
-       * Notice period permanently zero.
-       */
       policy.minDaysNoticeRequired =
         0;
 
@@ -691,10 +678,11 @@ export const updatePolicy =
 
       await policy.save();
 
+      await syncCurrentYearBalancesForAllEmployees();
+
       await audit({
         actorId:
-          req.currentUser
-            ._id,
+          req.currentUser._id,
 
         actorName:
           req.currentUser
@@ -717,7 +705,7 @@ export const updatePolicy =
             .department,
 
         details:
-          `Updated ${policy.leaveType} policy`,
+          `Updated ${policy.leaveType} policy. Yearly quota: ${policy.yearlyQuota}`,
       });
 
       res.json({
@@ -727,12 +715,6 @@ export const updatePolicy =
     }
   );
 
-/*
-|--------------------------------------------------------------------------
-| DELETE POLICY
-|--------------------------------------------------------------------------
-*/
-
 export const deletePolicy =
   asyncHandler(
     async (
@@ -740,9 +722,10 @@ export const deletePolicy =
       res
     ) => {
       const policy =
-        await LeavePolicy.findById(
-          req.params.id
-        );
+        await LeavePolicy
+          .findById(
+            req.params.id
+          );
 
       if (!policy) {
         throw new NotFoundError(
@@ -750,18 +733,19 @@ export const deletePolicy =
         );
       }
 
-      const policyId =
-        policy._id;
-
       const leaveType =
         policy.leaveType;
 
+      const policyId =
+        policy._id;
+
       await policy.deleteOne();
+
+      await syncCurrentYearBalancesForAllEmployees();
 
       await audit({
         actorId:
-          req.currentUser
-            ._id,
+          req.currentUser._id,
 
         actorName:
           req.currentUser
@@ -784,18 +768,11 @@ export const deletePolicy =
 
       res.json({
         success: true,
-
         message:
           'Leave policy deleted successfully.',
       });
     }
   );
-
-/*
-|--------------------------------------------------------------------------
-| ELIGIBLE APPROVERS
-|--------------------------------------------------------------------------
-*/
 
 export const listEligibleApprovers =
   asyncHandler(
@@ -803,19 +780,22 @@ export const listEligibleApprovers =
       req,
       res
     ) => {
+      const department =
+        req.query
+          .department ||
+        null;
+
       const approvers =
         await getEligibleApprovers(
-          req.query
-            .department
+          department
         );
 
       res.json({
         success: true,
-
         data:
           approvers.map(
             (user) => ({
-              _id:
+              id:
                 user._id,
 
               fullName:
@@ -832,9 +812,6 @@ export const listEligibleApprovers =
 
               designation:
                 user.designation,
-
-              canApproveOtherDepartments:
-                user.canApproveOtherDepartments,
             })
           ),
       });

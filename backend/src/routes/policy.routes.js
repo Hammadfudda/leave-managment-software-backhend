@@ -1,14 +1,52 @@
 import { Router } from 'express';
+
 import * as policies from '../controllers/policy.controller.js';
-import { authenticate, authorize, loadUser } from '../middleware/auth.js';
 
-const router = Router();
+import {
+  authenticate,
+  authorize,
+  loadUser,
+} from '../middleware/auth.js';
 
-router.use(authenticate, loadUser);
+const router =
+  Router();
 
-router.get('/eligible-approvers', authorize('admin'), policies.listEligibleApprovers);
-router.get('/', authorize('admin', 'manager'), policies.listPolicies);
-router.post('/', authorize('admin'), policies.createPolicy);
-router.patch('/:id', authorize('admin'), policies.updatePolicy);
+router.use(
+  authenticate,
+  loadUser
+);
+
+router.get(
+  '/eligible-approvers',
+  authorize('admin'),
+  policies.listEligibleApprovers
+);
+
+router.get(
+  '/',
+  authorize(
+    'admin',
+    'manager'
+  ),
+  policies.listPolicies
+);
+
+router.post(
+  '/',
+  authorize('admin'),
+  policies.createPolicy
+);
+
+router.patch(
+  '/:id',
+  authorize('admin'),
+  policies.updatePolicy
+);
+
+router.delete(
+  '/:id',
+  authorize('admin'),
+  policies.deletePolicy
+);
 
 export default router;

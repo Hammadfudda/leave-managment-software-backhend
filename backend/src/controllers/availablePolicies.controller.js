@@ -8,75 +8,55 @@ import {
   checkApplicantScope,
 } from '../services/eligibility.service.js';
 
-function isSpecific(
-  value,
-  wildcardLabel
+import {
+  policySpecificity,
+} from '../services/balance.service.js';
+
+function safePolicy(
+  policy
 ) {
-  return (
-    value !== null &&
-    value !== undefined &&
-    value !== '' &&
-    value !== wildcardLabel
-  );
-}
-
-function policyScore(policy) {
-  const routing =
-    policy.approvalRouting || {};
-
-  return (
-    (
-      isSpecific(
-        routing.grade,
-        'All Grades'
-      )
-        ? 4
-        : 0
-    ) +
-    (
-      isSpecific(
-        routing.department,
-        'All Departments'
-      )
-        ? 2
-        : 0
-    ) +
-    (
-      isSpecific(
-        routing.designation,
-        'All Designations'
-      )
-        ? 1
-        : 0
-    )
-  );
-}
-
-function toSafePolicy(policy) {
   return {
-    _id: policy._id,
+    _id:
+      policy._id,
+
     leaveType:
       policy.leaveType,
+
+    yearlyQuota:
+      Number(
+        policy.yearlyQuota ??
+          0
+      ),
+
     applicableRole:
       policy.applicableRole,
+
+    isPaid:
+      policy.isPaid,
+
     documentRequirement:
       policy.documentRequirement,
+
     approvalRouting: {
       grade:
-        policy.approvalRouting
+        policy
+          .approvalRouting
           ?.grade ??
         null,
 
       department:
-        policy.approvalRouting
+        policy
+          .approvalRouting
           ?.department ??
         null,
 
       designation:
-        policy.approvalRouting
+        policy
+          .approvalRouting
           ?.designation ??
         null,
     },
+
     finalApprovalMode:
       Boolean(
         policy.finalApprovalMode
@@ -95,58 +75,65 @@ export const listAvailablePolicies =
       req,
       res
     ) => {
-      const user =
-        req.currentUser;
-
       const policies =
-        await LeavePolicy.find({});
+        await LeavePolicy.find(
+          {}
+        );
 
       const matching =
         policies.filter(
           (policy) =>
             checkApplicantScope(
               policy,
-              user
-            ) === null
+              req.currentUser
+            ) === null &&
+            Number(
+              policy.yearlyQuota ??
+                0
+            ) > 0
         );
 
-      const bestByLeaveType =
+      const bestByType =
         new Map();
 
       for (
         const policy of matching
       ) {
         const type =
-          policy.leaveType;
+          String(
+            policy.leaveType
+          )
+            .trim()
+            .toLowerCase();
 
         const existing =
-          bestByLeaveType.get(
+          bestByType.get(
             type
           );
 
         if (
           !existing ||
-          policyScore(policy) >
-            policyScore(
+          policySpecificity(
+            policy
+          ) >
+            policySpecificity(
               existing
             )
         ) {
-          bestByLeaveType.set(
+          bestByType.set(
             type,
             policy
           );
         }
       }
 
-      const data = [
-        ...bestByLeaveType.values(),
-      ].map(
-        toSafePolicy
-      );
-
       res.json({
         success: true,
-        data,
+        data: [
+          ...bestByType.values(),
+        ].map(
+          safePolicy
+        ),
       });
     }
   );
