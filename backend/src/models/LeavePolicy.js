@@ -2,9 +2,27 @@ import mongoose from 'mongoose';
 
 const { Schema } = mongoose;
 
+const gradeQuotaSchema = new Schema(
+  {
+    gradeId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Grade',
+      required: true,
+    },
+
+    yearlyQuota: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
 const leavePolicySchema = new Schema(
   {
-    // Dynamic leave type: annual, sick, maternity, marriage, custom, etc.
     leaveType: {
       type: String,
       required: true,
@@ -24,21 +42,27 @@ const leavePolicySchema = new Schema(
     },
 
     /*
-     * POLICY-DRIVEN YEARLY QUOTA
+     * MULTIPLE GRADES PER POLICY.
      *
-     * This is the yearly entitlement for the applicant scope below.
      * Example:
-     * annual + Grade A = 20
-     * annual + Grade B = 15
-     * maternity + Grade A = 90
-     *
-     * Balance rows are created per employee + leaveType + year.
+     * Annual Leave
+     * Grade A -> 20 days/year
+     * Grade B -> 15 days/year
+     * Grade C -> 12 days/year
      */
-    yearlyQuota: {
-      type: Number,
+    gradeQuotas: {
+      type: [gradeQuotaSchema],
       required: true,
-      min: 0,
-      default: 0,
+      validate: {
+        validator(value) {
+          return (
+            Array.isArray(value) &&
+            value.length > 0
+          );
+        },
+        message:
+          'At least one grade and yearly quota is required.',
+      },
     },
 
     isPaid: {
@@ -46,7 +70,6 @@ const leavePolicySchema = new Schema(
       default: true,
     },
 
-    // Kept only for backwards compatibility. UI no longer uses it.
     minDaysNoticeRequired: {
       type: Number,
       default: 0,
@@ -62,18 +85,22 @@ const leavePolicySchema = new Schema(
       default: 'optional',
     },
 
-    adminOnlyApproval: {
-      type: Boolean,
-      default: false,
-    },
-
+    /*
+     * Admin-only Leave Policy option REMOVED.
+     *
+     * true:
+     *   employee's assigned manager is the final approver.
+     *
+     * false:
+     *   use approvalRouting.approverIds.
+     *   Those IDs must be active Managers only.
+     */
     finalApprovalMode: {
       type: Boolean,
-      default: false,
+      default: true,
     },
 
     approvalRouting: {
-      // Applicant scope
       designation: {
         type: String,
         default: null,
@@ -84,13 +111,6 @@ const leavePolicySchema = new Schema(
         default: null,
       },
 
-      // Grade MongoDB ID. null means All Grades.
-      grade: {
-        type: String,
-        default: null,
-      },
-
-      // Manual approval chain when not Admin Only / Final Manager.
       approverIds: [
         {
           type:
@@ -108,7 +128,6 @@ const leavePolicySchema = new Schema(
 leavePolicySchema.index({
   leaveType: 1,
   applicableRole: 1,
-  'approvalRouting.grade': 1,
   'approvalRouting.department': 1,
   'approvalRouting.designation': 1,
 });

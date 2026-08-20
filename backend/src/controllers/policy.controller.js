@@ -44,8 +44,6 @@ function optionalString(
   if (
     !text ||
     text ===
-      'All Grades' ||
-    text ===
       'All Departments' ||
     text ===
       'All Designations'
@@ -56,35 +54,109 @@ function optionalString(
   return text;
 }
 
+function normalizeGradeQuotas(
+  value
+) {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0
+  ) {
+    throw new ValidationError(
+      'Select at least one grade and enter its yearly quota.'
+    );
+  }
+
+  const seen =
+    new Set();
+
+  return value.map(
+    (row) => {
+      const gradeId =
+        String(
+          row.gradeId ||
+          ''
+        ).trim();
+
+      const yearlyQuota =
+        Number(
+          row.yearlyQuota
+        );
+
+      if (!gradeId) {
+        throw new ValidationError(
+          'Every selected grade must have a valid Grade ID.'
+        );
+      }
+
+      if (
+        seen.has(
+          gradeId
+        )
+      ) {
+        throw new ValidationError(
+          'The same grade cannot be added twice to one leave policy.'
+        );
+      }
+
+      if (
+        !Number.isFinite(
+          yearlyQuota
+        ) ||
+        yearlyQuota <= 0
+      ) {
+        throw new ValidationError(
+          'Every selected grade must have a yearly quota greater than 0.'
+        );
+      }
+
+      seen.add(
+        gradeId
+      );
+
+      return {
+        gradeId,
+        yearlyQuota,
+      };
+    }
+  );
+}
+
+async function validateGrades(
+  gradeQuotas
+) {
+  const ids =
+    gradeQuotas.map(
+      (row) =>
+        row.gradeId
+    );
+
+  const count =
+    await Grade.countDocuments(
+      {
+        _id: {
+          $in: ids,
+        },
+      }
+    );
+
+  if (
+    count !== ids.length
+  ) {
+    throw new ValidationError(
+      'One or more selected grades do not exist in Master Data.'
+    );
+  }
+}
+
 function normalizeRouting(
   body,
-  disableApprovers
+  finalApprovalMode
 ) {
   const routing =
     body.approvalRouting ||
     {};
 
-  const approverIds =
-    disableApprovers ||
-    !Array.isArray(
-      routing.approverIds
-    )
-      ? []
-      : [
-          ...new Set(
-            routing
-              .approverIds
-              .map(String)
-              .filter(Boolean)
-          ),
-        ];
-
   return {
-    grade:
-      optionalString(
-        routing.grade
-      ),
-
     department:
       optionalString(
         routing.department
@@ -95,50 +167,26 @@ function normalizeRouting(
         routing.designation
       ),
 
-    approverIds,
+    approverIds:
+      finalApprovalMode
+        ? []
+        : [
+            ...new Set(
+              (
+                Array.isArray(
+                  routing.approverIds
+                )
+                  ? routing.approverIds
+                  : []
+              )
+                .map(String)
+                .filter(Boolean)
+            ),
+          ],
   };
 }
 
-function normalizeQuota(
-  value
-) {
-  const quota =
-    Number(value);
-
-  if (
-    !Number.isFinite(
-      quota
-    ) ||
-    quota <= 0
-  ) {
-    throw new ValidationError(
-      'Yearly quota must be greater than 0.'
-    );
-  }
-
-  return quota;
-}
-
-async function validateGrade(
-  gradeId
-) {
-  if (!gradeId) {
-    return;
-  }
-
-  const grade =
-    await Grade.findById(
-      gradeId
-    );
-
-  if (!grade) {
-    throw new ValidationError(
-      'Selected grade does not exist.'
-    );
-  }
-}
-
-async function validateApprovers(
+async function validateManagers(
   approverIds
 ) {
   if (
@@ -155,11 +203,10 @@ async function validateApprovers(
           $in:
             approverIds,
         },
-        role: {
-          $in: [
-            'manager',
-          ],
-        },
+
+        role:
+          'manager',
+
         status:
           'active',
       }
@@ -170,7 +217,7 @@ async function validateApprovers(
     approverIds.length
   ) {
     throw new ValidationError(
-      'One or more selected approvers are not valid active approvers.'
+      'Only active Managers can be selected in Leave Policy routing.'
     );
   }
 }
@@ -178,17 +225,19 @@ async function validateApprovers(
 async function noDuplicate({
   leaveType,
   applicableRole,
+  gradeQuotas,
   approvalRouting,
   excludeId = null,
 }) {
+  const gradeIds =
+    gradeQuotas.map(
+      (row) =>
+        row.gradeId
+    );
+
   const filter = {
     leaveType,
-
     applicableRole,
-
-    'approvalRouting.grade':
-      approvalRouting.grade ||
-      null,
 
     'approvalRouting.department':
       approvalRouting.department ||
@@ -197,6 +246,11 @@ async function noDuplicate({
     'approvalRouting.designation':
       approvalRouting.designation ||
       null,
+
+    'gradeQuotas.gradeId': {
+      $in:
+        gradeIds,
+    },
   };
 
   if (excludeId) {
@@ -213,7 +267,7 @@ async function noDuplicate({
 
   if (duplicate) {
     throw new ValidationError(
-      'A leave policy already exists for this leave type, role, grade, department and designation combination.'
+      'A conflicting leave policy already exists for at least one selected grade with this role, department and designation scope.'
     );
   }
 }
@@ -253,14 +307,16 @@ export const listPolicies =
         filter.leaveType =
           String(
             req.query.leaveType
-          ).toLowerCase();
+          )
+            .trim()
+            .toLowerCase();
       }
 
       if (
         req.query.grade
       ) {
         filter[
-          'approvalRouting.grade'
+          'gradeQuotas.gradeId'
         ] =
           req.query.grade;
       }
@@ -278,6 +334,10 @@ export const listPolicies =
           LeavePolicy.find(
             filter
           )
+            .populate(
+              'gradeQuotas.gradeId',
+              'name'
+            )
             .populate(
               'approvalRouting.approverIds',
               'fullName email role department designation'
@@ -330,47 +390,36 @@ export const createPolicy =
         );
       }
 
-      const yearlyQuota =
-        normalizeQuota(
+      const gradeQuotas =
+        normalizeGradeQuotas(
           req.body
-            .yearlyQuota
+            .gradeQuotas
         );
+
+      await validateGrades(
+        gradeQuotas
+      );
 
       const applicableRole =
         req.body
           .applicableRole ||
         'All Employees';
 
-      const adminOnlyApproval =
-        Boolean(
-          req.body
-            .adminOnlyApproval
-        );
-
       const finalApprovalMode =
-        Boolean(
-          req.body
-            .finalApprovalMode
-        );
-
-      if (
-        adminOnlyApproval &&
-        finalApprovalMode
-      ) {
-        throw new ValidationError(
-          'Admin-only approval and Final Manager approval cannot both be enabled.'
-        );
-      }
+        req.body
+          .finalApprovalMode !==
+        undefined
+          ? Boolean(
+              req.body
+                .finalApprovalMode
+            )
+          : true;
 
       const approvalRouting =
         normalizeRouting(
           req.body,
           finalApprovalMode
         );
-
-      await validateGrade(
-        approvalRouting.grade
-      );
 
       if (
         !finalApprovalMode &&
@@ -379,11 +428,11 @@ export const createPolicy =
           .length === 0
       ) {
         throw new ValidationError(
-          'At least one approver is required.'
+          'Select at least one Manager or use Assigned Manager Final.'
         );
       }
 
-      await validateApprovers(
+      await validateManagers(
         approvalRouting
           .approverIds
       );
@@ -391,6 +440,7 @@ export const createPolicy =
       await noDuplicate({
         leaveType,
         applicableRole,
+        gradeQuotas,
         approvalRouting,
       });
 
@@ -398,9 +448,7 @@ export const createPolicy =
         await LeavePolicy.create(
           {
             leaveType,
-
-            yearlyQuota,
-
+            gradeQuotas,
             applicableRole,
 
             isPaid:
@@ -420,9 +468,7 @@ export const createPolicy =
                 .documentRequirement ||
               'optional',
 
-            
             finalApprovalMode,
-
             approvalRouting,
           }
         );
@@ -454,14 +500,29 @@ export const createPolicy =
             .department,
 
         details:
-          `Created ${policy.leaveType} policy with yearly quota ${policy.yearlyQuota}`,
+          `Created ${policy.leaveType} policy for ${gradeQuotas.length} grade(s)`,
       });
+
+      const populated =
+        await LeavePolicy
+          .findById(
+            policy._id
+          )
+          .populate(
+            'gradeQuotas.gradeId',
+            'name'
+          )
+          .populate(
+            'approvalRouting.approverIds',
+            'fullName email role department designation'
+          );
 
       res
         .status(201)
         .json({
           success: true,
-          data: policy,
+          data:
+            populated,
         });
     }
   );
@@ -473,10 +534,9 @@ export const updatePolicy =
       res
     ) => {
       const policy =
-        await LeavePolicy
-          .findById(
-            req.params.id
-          );
+        await LeavePolicy.findById(
+          req.params.id
+        );
 
       if (!policy) {
         throw new NotFoundError(
@@ -495,17 +555,30 @@ export const updatePolicy =
               .toLowerCase()
           : policy.leaveType;
 
-      const yearlyQuota =
-        req.body
-          .yearlyQuota !==
+      const gradeQuotas =
+        req.body.gradeQuotas !==
         undefined
-          ? normalizeQuota(
+          ? normalizeGradeQuotas(
               req.body
-                .yearlyQuota
+                .gradeQuotas
             )
-          : normalizeQuota(
-              policy.yearlyQuota
+          : policy.gradeQuotas.map(
+              (row) => ({
+                gradeId:
+                  String(
+                    row.gradeId
+                  ),
+
+                yearlyQuota:
+                  Number(
+                    row.yearlyQuota
+                  ),
+              })
             );
+
+      await validateGrades(
+        gradeQuotas
+      );
 
       const applicableRole =
         req.body
@@ -515,19 +588,6 @@ export const updatePolicy =
               .applicableRole
           : policy
               .applicableRole;
-
-      const adminOnlyApproval =
-        req.body
-          .adminOnlyApproval !==
-        undefined
-          ? Boolean(
-              req.body
-                .adminOnlyApproval
-            )
-          : Boolean(
-              policy
-                .adminOnlyApproval
-            );
 
       const finalApprovalMode =
         req.body
@@ -542,22 +602,7 @@ export const updatePolicy =
                 .finalApprovalMode
             );
 
-      if (
-        adminOnlyApproval &&
-        finalApprovalMode
-      ) {
-        throw new ValidationError(
-          'Admin-only approval and Final Manager approval cannot both be enabled.'
-        );
-      }
-
       let approvalRouting = {
-        grade:
-          policy
-            .approvalRouting
-            ?.grade ||
-          null,
-
         department:
           policy
             .approvalRouting
@@ -587,23 +632,17 @@ export const updatePolicy =
         approvalRouting =
           normalizeRouting(
             req.body,
-            adminOnlyApproval ||
-              finalApprovalMode
+            finalApprovalMode
           );
       }
 
       if (
-        adminOnlyApproval ||
         finalApprovalMode
       ) {
         approvalRouting
           .approverIds =
           [];
       }
-
-      await validateGrade(
-        approvalRouting.grade
-      );
 
       if (
         !finalApprovalMode &&
@@ -612,11 +651,11 @@ export const updatePolicy =
           .length === 0
       ) {
         throw new ValidationError(
-          'At least one approver is required.'
+          'Select at least one Manager or use Assigned Manager Final.'
         );
       }
 
-      await validateApprovers(
+      await validateManagers(
         approvalRouting
           .approverIds
       );
@@ -624,6 +663,7 @@ export const updatePolicy =
       await noDuplicate({
         leaveType,
         applicableRole,
+        gradeQuotas,
         approvalRouting,
         excludeId:
           policy._id,
@@ -632,8 +672,8 @@ export const updatePolicy =
       policy.leaveType =
         leaveType;
 
-      policy.yearlyQuota =
-        yearlyQuota;
+      policy.gradeQuotas =
+        gradeQuotas;
 
       policy.applicableRole =
         applicableRole;
@@ -662,7 +702,7 @@ export const updatePolicy =
             .documentRequirement;
       }
 
-            policy.finalApprovalMode =
+      policy.finalApprovalMode =
         finalApprovalMode;
 
       policy.approvalRouting =
@@ -697,12 +737,27 @@ export const updatePolicy =
             .department,
 
         details:
-          `Updated ${policy.leaveType} policy. Yearly quota: ${policy.yearlyQuota}`,
+          `Updated ${policy.leaveType} policy for ${gradeQuotas.length} grade(s)`,
       });
+
+      const populated =
+        await LeavePolicy
+          .findById(
+            policy._id
+          )
+          .populate(
+            'gradeQuotas.gradeId',
+            'name'
+          )
+          .populate(
+            'approvalRouting.approverIds',
+            'fullName email role department designation'
+          );
 
       res.json({
         success: true,
-        data: policy,
+        data:
+          populated,
       });
     }
   );
@@ -714,10 +769,9 @@ export const deletePolicy =
       res
     ) => {
       const policy =
-        await LeavePolicy
-          .findById(
-            req.params.id
-          );
+        await LeavePolicy.findById(
+          req.params.id
+        );
 
       if (!policy) {
         throw new NotFoundError(
@@ -760,6 +814,7 @@ export const deletePolicy =
 
       res.json({
         success: true,
+
         message:
           'Leave policy deleted successfully.',
       });
@@ -769,23 +824,17 @@ export const deletePolicy =
 export const listEligibleApprovers =
   asyncHandler(
     async (
-      req,
+      _req,
       res
     ) => {
-      const department =
-        req.query
-          .department ||
-        null;
-
-      const approvers =
-        await getEligibleApprovers(
-          department
-        );
+      const managers =
+        await getEligibleApprovers();
 
       res.json({
         success: true,
+
         data:
-          approvers.map(
+          managers.map(
             (user) => ({
               id:
                 user._id,

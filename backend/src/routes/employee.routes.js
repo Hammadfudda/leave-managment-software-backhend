@@ -5,6 +5,11 @@ import {
 import * as employees from '../controllers/employee.controller.js';
 
 import {
+  completePendingEmployee,
+  importEmployeesCsvPending,
+} from '../controllers/csvImport.controller.js';
+
+import {
   authenticate,
   authorize,
   loadUser,
@@ -64,7 +69,7 @@ router.post(
   uploadCsv.single(
     'file'
   ),
-  employees.importEmployeesCsv
+  importEmployeesCsvPending
 );
 
 /*
@@ -83,10 +88,7 @@ router.get(
 | CREATE EMPLOYEE
 |--------------------------------------------------------------------------
 |
-| Admin only.
-|
-| Manager validation happens BEFORE
-| createEmployee controller.
+| Existing strict Create Employee flow is unchanged.
 |
 */
 
@@ -113,8 +115,7 @@ router.get(
 | UPDATE EMPLOYEE
 |--------------------------------------------------------------------------
 |
-| Same manager validation is applied
-| when Admin edits an employee.
+| Existing update controller stays unchanged.
 |
 */
 
@@ -123,6 +124,21 @@ router.patch(
   authorize('admin'),
   validateEmployeeManager,
   employees.updateEmployee
+);
+
+/*
+|--------------------------------------------------------------------------
+| COMPLETE PENDING CSV DETAILS
+|--------------------------------------------------------------------------
+|
+| This endpoint is only called after the existing normal update succeeds.
+|
+*/
+
+router.patch(
+  '/:id/complete-pending',
+  authorize('admin'),
+  completePendingEmployee
 );
 
 /*

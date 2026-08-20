@@ -1,63 +1,74 @@
 import LeavePolicy from '../models/LeavePolicy.js';
 import User from '../models/User.js';
 
-function isWildcard(
-  value,
-  allLabel
-) {
-  return (
-    value === null ||
-    value === undefined ||
-    value === '' ||
-    value === allLabel
-  );
-}
-
+/*
+|--------------------------------------------------------------------------
+| POLICY APPLICANT SCOPE
+|--------------------------------------------------------------------------
+|
+| approvalRouting.grade / department / designation determine
+| WHO the policy applies to.
+|
+| approvalRouting.approverIds determines WHO approves it.
+|
+| These are completely separate concepts.
+|
+*/
 export function checkApplicantScope(
   policy,
   user
 ) {
-  const routing =
-    policy.approvalRouting ||
-    {};
-
+  // CSV-imported employees with incomplete required details must not receive
+  // leave entitlement or become eligible to apply for leave yet.
   if (
-    !isWildcard(
-      routing.grade,
-      'All Grades'
-    ) &&
-    String(
-      user.gradeId
-    ) !==
-      String(
-        routing.grade
-      )
+    user?.detailsStatus ===
+    'pending'
+  ) {
+    return 'Employee details must be completed before leave policies can apply.';
+  }
+
+  const routing =
+    policy.approvalRouting || {};
+
+  /*
+   * GRADE
+   *
+   * Policy stores Grade MongoDB ID as string.
+   * User stores gradeId as ObjectId.
+   */
+  if (
+    routing.grade &&
+    String(user.gradeId) !==
+      String(routing.grade)
   ) {
     return 'This leave type is not available for your grade.';
   }
 
+  /*
+   * DEPARTMENT
+   */
   if (
-    !isWildcard(
-      routing.department,
-      'All Departments'
-    ) &&
+    routing.department &&
     routing.department !==
       user.department
   ) {
     return 'This leave type is not available for your department.';
   }
 
+  /*
+   * DESIGNATION
+   */
   if (
-    !isWildcard(
-      routing.designation,
-      'All Designations'
-    ) &&
+    routing.designation &&
     routing.designation !==
       user.designation
   ) {
     return 'This leave type is not available for your designation.';
   }
 
+  /*
+   * ROLE
+   */
   if (
     policy.applicableRole &&
     policy.applicableRole !==
@@ -71,28 +82,29 @@ export function checkApplicantScope(
   return null;
 }
 
+/*
+|--------------------------------------------------------------------------
+| AVAILABLE LEAVE TYPES FOR EMPLOYEE
+|--------------------------------------------------------------------------
+*/
 export async function getAvailableLeaveTypesForUser(
   user
 ) {
   const policies =
     await LeavePolicy.find({});
 
-  const matching =
+  const matchingPolicies =
     policies.filter(
       (policy) =>
         checkApplicantScope(
           policy,
           user
-        ) === null &&
-        Number(
-          policy.yearlyQuota ??
-            0
-        ) > 0
+        ) === null
     );
 
   return [
     ...new Set(
-      matching.map(
+      matchingPolicies.map(
         (policy) =>
           policy.leaveType
       )
@@ -100,11 +112,54 @@ export async function getAvailableLeaveTypesForUser(
   ];
 }
 
+/*
+|--------------------------------------------------------------------------
+| ELIGIBLE APPROVERS
+|--------------------------------------------------------------------------
+*/
 export async function getEligibleApprovers(
   policyDepartmentFilter
 ) {
-  const candidates = await User.find({ role: 'manager', status: 'active' });
+  const candidates =
+    await User.find({
+      role: {
+        $in: [
+          'manager',
+          'admin',
+        ],
+      },
 
-  return candidates;
+      status: 'active',
+    });
 
+  return candidates.filter(
+    (user) => {
+      if (
+        user.role ===
+        'admin'
+      ) {
+        return true;
+      }
+
+      if (
+        !policyDepartmentFilter ||
+        policyDepartmentFilter ===
+          'All Departments'
+      ) {
+        return true;
+      }
+
+      if (
+        user.department ===
+        policyDepartmentFilter
+      ) {
+        return true;
+      }
+
+      return (
+        user.canApproveOtherDepartments ===
+        true
+      );
+    }
+  );
 }
