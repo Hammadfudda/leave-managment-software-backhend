@@ -1,5 +1,9 @@
 import mongoose from 'mongoose';
 
+import {
+  tenantPlugin,
+} from '../utils/tenantPlugin.js';
+
 const { Schema } = mongoose;
 
 const leaveRequestSchema = new Schema(
@@ -68,10 +72,7 @@ const leaveRequestSchema = new Schema(
 
     attachmentResourceType: {
       type: String,
-      enum: [
-        'image',
-        'raw',
-      ],
+      enum: ['image', 'raw'],
       default: null,
     },
 
@@ -97,14 +98,12 @@ const leaveRequestSchema = new Schema(
 
     status: {
       type: String,
-
       enum: [
         'pending',
         'approved',
         'rejected',
         'cancelled',
       ],
-
       default: 'pending',
     },
 
@@ -142,12 +141,10 @@ const leaveRequestSchema = new Schema(
         },
 
         approverName: String,
-
         approverRole: String,
 
         action: {
           type: String,
-
           enum: [
             'approved',
             'rejected',
@@ -211,27 +208,34 @@ const leaveRequestSchema = new Schema(
       default: null,
     },
   },
-
   {
     timestamps: true,
   }
 );
 
+leaveRequestSchema.plugin(
+  tenantPlugin
+);
+
 leaveRequestSchema.index({
+  organizationId: 1,
   employeeId: 1,
   status: 1,
 });
 
 leaveRequestSchema.index({
+  organizationId: 1,
   requiredApproverIds: 1,
   status: 1,
 });
 
 leaveRequestSchema.index({
+  organizationId: 1,
   originalRequestId: 1,
 });
 
 leaveRequestSchema.index({
+  organizationId: 1,
   isAdminOnlyDecision: 1,
   status: 1,
 });

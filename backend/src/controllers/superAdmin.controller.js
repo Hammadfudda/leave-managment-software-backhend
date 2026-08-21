@@ -5,6 +5,11 @@ import SuperAdmin from '../models/SuperAdmin.js';
 import Organization from '../models/Organization.js';
 import User from '../models/User.js';
 
+import {
+  sendEmail,
+  templates,
+} from '../services/email.service.js';
+
 import { asyncHandler } from '../utils/asyncHandler.js';
 import {
   ConflictError,
@@ -249,13 +254,26 @@ export const createOrganization = asyncHandler(async (req, res) => {
       organization._id
     ).populate('adminUserId', 'fullName email status');
 
+    const emailSent = await sendEmail({
+      to: adminEmail,
+      subject: 'Your Leave Management Admin account is ready',
+      html: templates.clientAdminCreated({
+        adminName,
+        companyName,
+        email: adminEmail,
+        password,
+      }),
+    });
+
     return res.status(201).json({
       success: true,
       data: publicOrganization(populated),
       credentials: {
         email: adminEmail,
         password,
+        emailSent,
       },
+      emailSent,
     });
   } catch (error) {
     await Organization.findByIdAndDelete(organization._id);

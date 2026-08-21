@@ -20,13 +20,18 @@ const transporter = smtpReady
   : null;
 
 /**
- * Spec Part 8.1 — a failed notification must NEVER roll back the action that
- * triggered it. This function never throws.
+ * A failed email must NEVER roll back the action that triggered it.
+ * Returns true on success and false on failure.
  */
 export async function sendEmail({ to, subject, html }) {
   try {
     if (!transporter) {
-      console.warn("SMTP configuration missing — skipping email:", subject, "->", to);
+      console.warn(
+        "SMTP configuration missing — skipping email:",
+        subject,
+        "->",
+        to,
+      );
       return false;
     }
 
@@ -63,9 +68,28 @@ export const templates = {
        <p>An account has been created for you on the Leave Management System.</p>
        <p>
          <strong>Email:</strong> ${user.email}<br/>
-         <strong> password:</strong> your CNIC (${user.cnic})
-       </p>  
+         <strong>Password:</strong> your CNIC (${user.cnic})
+       </p>
        <p><a href="${process.env.CLIENT_URL}">Open the portal</a></p>`,
+    ),
+
+  clientAdminCreated: ({
+    adminName,
+    companyName,
+    email,
+    password,
+  }) =>
+    layout(
+      "Your Admin account is ready",
+      `<p>Hi ${adminName},</p>
+       <p>Your Leave Management Admin account for <strong>${companyName}</strong> has been created.</p>
+       <p>
+         <strong>Login URL:</strong>
+         <a href="${process.env.CLIENT_URL}">${process.env.CLIENT_URL}</a><br/>
+         <strong>Email:</strong> ${email}<br/>
+         <strong>Password:</strong> ${password}
+       </p>
+       <p>You can now sign in and set up your Managers, Employees and leave settings.</p>`,
     ),
 
   pendingApproval: (request, recipientName) =>
@@ -76,8 +100,8 @@ export const templates = {
          <strong>${request.employeeName}</strong> has submitted a
          <strong>${request.leaveType}</strong> leave request
          (${new Date(request.startDate).toDateString()} – ${new Date(
-           request.endDate,
-         ).toDateString()},
+            request.endDate,
+          ).toDateString()},
          ${request.totalWorkingDays} working day(s)).
        </p>
        <p>It is now your turn to act on it.</p>
@@ -132,5 +156,6 @@ export const templates = {
        </p>`,
     ),
 
-  employeeLifecycle: (title, message) => layout(title, `<p>${message}</p>`),
+  employeeLifecycle: (title, message) =>
+    layout(title, `<p>${message}</p>`),
 };

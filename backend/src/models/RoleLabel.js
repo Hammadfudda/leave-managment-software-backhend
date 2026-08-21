@@ -1,5 +1,9 @@
 import mongoose from 'mongoose';
 
+import {
+  tenantPlugin,
+} from '../utils/tenantPlugin.js';
+
 const { Schema } = mongoose;
 
 /**
@@ -10,9 +14,21 @@ const { Schema } = mongoose;
  */
 const roleLabelSchema = new Schema(
   {
-    name: { type: String, required: true, unique: true },
+    name: { type: String, required: true },
   },
   { timestamps: true }
+);
+
+roleLabelSchema.plugin(tenantPlugin);
+
+roleLabelSchema.index(
+  {
+    organizationId: 1,
+    name: 1,
+  },
+  {
+    unique: true,
+  }
 );
 
 export default mongoose.model('RoleLabel', roleLabelSchema);

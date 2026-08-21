@@ -1,11 +1,19 @@
 import mongoose from 'mongoose';
 
+import {
+  tenantPlugin,
+} from '../utils/tenantPlugin.js';
+
 const { Schema } = mongoose;
 
-// Spec Part 2.8
 const notificationSchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    userId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+
     type: {
       type: String,
       enum: [
@@ -19,14 +27,44 @@ const notificationSchema = new Schema(
       ],
       required: true,
     },
-    message: { type: String, required: true },
-    relatedLeaveRequestId: { type: Schema.Types.ObjectId, ref: 'LeaveRequest' },
-    isRead: { type: Boolean, default: false },
-    emailSent: { type: Boolean, default: false },
+
+    message: {
+      type: String,
+      required: true,
+    },
+
+    relatedLeaveRequestId: {
+      type: Schema.Types.ObjectId,
+      ref: 'LeaveRequest',
+    },
+
+    isRead: {
+      type: Boolean,
+      default: false,
+    },
+
+    emailSent: {
+      type: Boolean,
+      default: false,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-notificationSchema.index({ userId: 1, isRead: 1, createdAt: -1 });
+notificationSchema.plugin(
+  tenantPlugin
+);
 
-export default mongoose.model('Notification', notificationSchema);
+notificationSchema.index({
+  organizationId: 1,
+  userId: 1,
+  isRead: 1,
+  createdAt: -1,
+});
+
+export default mongoose.model(
+  'Notification',
+  notificationSchema
+);

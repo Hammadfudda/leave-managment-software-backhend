@@ -1,5 +1,9 @@
 import mongoose from 'mongoose';
 
+import {
+  tenantPlugin,
+} from '../utils/tenantPlugin.js';
+
 const { Schema } = mongoose;
 
 // Spec Part 2.1
@@ -13,7 +17,6 @@ const userSchema = new Schema(
     nationalId: { type: String, required: true, unique: true },
     passwordHash: { type: String, required: true },
     passwordChangedFromDefault: { type: Boolean, default: false },
-
     role: { type: String, enum: ['admin', 'manager', 'employee'], required: true },
 
     // SaaS tenant ownership.
@@ -32,7 +35,6 @@ const userSchema = new Schema(
     managerId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
 
     canApproveOtherDepartments: { type: Boolean, default: false },
-
     employeeId: { type: String, required: true, unique: true },
     cnic: { type: String, default: '' },
     designation: { type: String, default: '' },
@@ -46,7 +48,6 @@ const userSchema = new Schema(
       default: 'complete',
       index: true,
     },
-
     pendingFields: {
       type: [String],
       default: [],
@@ -71,8 +72,10 @@ const userSchema = new Schema(
   { timestamps: true }
 );
 
-userSchema.index({ managerId: 1 });
-userSchema.index({ department: 1 });
+userSchema.plugin(tenantPlugin);
+
+userSchema.index({ organizationId: 1, managerId: 1 });
+userSchema.index({ organizationId: 1, department: 1 });
 userSchema.index({ organizationId: 1, role: 1, status: 1 });
 
 export default mongoose.model('User', userSchema);

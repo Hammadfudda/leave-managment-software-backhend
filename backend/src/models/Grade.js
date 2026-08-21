@@ -1,5 +1,9 @@
 import mongoose from 'mongoose';
 
+import {
+  tenantPlugin,
+} from '../utils/tenantPlugin.js';
+
 const { Schema } = mongoose;
 
 const gradeSchema = new Schema(
@@ -7,7 +11,6 @@ const gradeSchema = new Schema(
     name: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
     },
 
@@ -20,7 +23,6 @@ const gradeSchema = new Schema(
       type: Boolean,
       default: false,
     },
-
     maxCarryForwardDays: {
       type: Number,
       default: 0,
@@ -35,6 +37,18 @@ const gradeSchema = new Schema(
   },
   {
     timestamps: true,
+  }
+);
+
+gradeSchema.plugin(tenantPlugin);
+
+gradeSchema.index(
+  {
+    organizationId: 1,
+    name: 1,
+  },
+  {
+    unique: true,
   }
 );
 

@@ -81,6 +81,7 @@ export const login = asyncHandler(async (req, res) => {
 
     await LoginHistory.create({
       userId: user._id,
+      organizationId: user.organizationId ?? null,
       successful: false,
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
@@ -95,6 +96,7 @@ export const login = asyncHandler(async (req, res) => {
 
   await LoginHistory.create({
     userId: user._id,
+    organizationId: user.organizationId ?? null,
     successful: true,
     ipAddress: req.ip,
     userAgent: req.headers['user-agent'],

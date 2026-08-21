@@ -1,13 +1,26 @@
 import mongoose from 'mongoose';
 
+import {
+  tenantPlugin,
+} from '../utils/tenantPlugin.js';
+
 const { Schema } = mongoose;
 
-// Spec Part 2.9
 const auditLogSchema = new Schema(
   {
-    actorId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    actorId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+
     actorName: String,
-    action: { type: String, required: true }, // see Part 8.3 for the full action vocabulary
+
+    action: {
+      type: String,
+      required: true,
+    },
+
     targetType: String,
     targetId: Schema.Types.ObjectId,
     details: String,
@@ -16,10 +29,26 @@ const auditLogSchema = new Schema(
     leaveType: String,
     comment: String,
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-auditLogSchema.index({ createdAt: -1 });
-auditLogSchema.index({ actorId: 1 });
+auditLogSchema.plugin(
+  tenantPlugin
+);
 
-export default mongoose.model('AuditLog', auditLogSchema);
+auditLogSchema.index({
+  organizationId: 1,
+  createdAt: -1,
+});
+
+auditLogSchema.index({
+  organizationId: 1,
+  actorId: 1,
+});
+
+export default mongoose.model(
+  'AuditLog',
+  auditLogSchema
+);

@@ -1,5 +1,13 @@
 import mongoose from 'mongoose';
 
+import {
+  tenantPlugin,
+} from '../utils/tenantPlugin.js';
+
+import {
+  getTenantOrganizationId,
+} from '../utils/tenantContext.js';
+
 const { Schema } = mongoose;
 
 const gradeQuotaSchema = new Schema(
@@ -29,7 +37,6 @@ const leavePolicySchema = new Schema(
       trim: true,
       lowercase: true,
     },
-
     /*
      * LEGACY COMPATIBILITY:
      * Kept in schema so existing DB records / older code are not destroyed.
@@ -45,7 +52,6 @@ const leavePolicySchema = new Schema(
       ],
       default: 'All Employees',
     },
-
     /*
      * FINAL SOURCE OF LEAVE ENTITLEMENT.
      *
@@ -68,7 +74,6 @@ const leavePolicySchema = new Schema(
           'At least one grade and yearly quota is required.',
       },
     },
-
     isPaid: {
       type: Boolean,
       default: true,
@@ -92,7 +97,6 @@ const leavePolicySchema = new Schema(
       ],
       default: 'optional',
     },
-
     /*
      * Carry-forward belongs to Leave Policy, not Grade.
      */
@@ -118,7 +122,6 @@ const leavePolicySchema = new Schema(
       type: Boolean,
       default: true,
     },
-
     /*
      * department/designation are kept ONLY so old DB documents stay readable.
      * New UI/controller writes them as null.
@@ -141,7 +144,6 @@ const leavePolicySchema = new Schema(
         },
       ],
     },
-
     /*
      * Legacy compatibility for old requests/controllers.
      * New Leave Policy UI never enables admin-only approval.
@@ -156,20 +158,72 @@ const leavePolicySchema = new Schema(
   }
 );
 
+leavePolicySchema.plugin(tenantPlugin);
+
 /*
- * No unique index on leaveType here.
- * This avoids startup/index errors if old DB records contain more than
- * one policy for the same leave type.
- * The new controller prevents creating another policy for the same type.
+ * Current index preserved, with organizationId added in front.
  */
 leavePolicySchema.index({
+  organizationId: 1,
   leaveType: 1,
   applicableRole: 1,
   'approvalRouting.department': 1,
   'approvalRouting.designation': 1,
 });
 
-export default mongoose.model(
+const LeavePolicy = mongoose.model(
   'LeavePolicy',
   leavePolicySchema
 );
+
+/*
+|--------------------------------------------------------------------------
+| TENANT-SAFE DISTINCT
+|--------------------------------------------------------------------------
+|
+| Mongoose 8 does not provide query middleware for Model.distinct().
+| Existing employee CSV export uses LeavePolicy.distinct('leaveType').
+| Wrap the model method directly so that call stays tenant-safe without
+| rewriting the 2,000+ line employee controller.
+|
+*/
+const mongooseDistinct =
+  LeavePolicy.distinct.bind(
+    LeavePolicy
+  );
+
+LeavePolicy.distinct = function tenantSafeDistinct(
+  field,
+  conditions = {}
+) {
+  const tenantId =
+    getTenantOrganizationId();
+
+  if (tenantId === undefined) {
+    return mongooseDistinct(
+      field,
+      conditions
+    );
+  }
+
+  const organizationId =
+    tenantId === null
+      ? null
+      : new mongoose.Types.ObjectId(
+          tenantId
+        );
+
+  return mongooseDistinct(
+    field,
+    {
+      $and: [
+        conditions || {},
+        {
+          organizationId,
+        },
+      ],
+    }
+  );
+};
+
+export default LeavePolicy;
