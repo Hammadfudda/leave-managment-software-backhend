@@ -14,6 +14,12 @@ import {
 const router = Router();
 
 router.post(
+  '/setup',
+  loginLimiter,
+  superAdmin.setupFirstSuperAdmin
+);
+
+router.post(
   '/login',
   loginLimiter,
   superAdmin.login

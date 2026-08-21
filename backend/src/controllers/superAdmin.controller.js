@@ -59,6 +59,59 @@ function publicOrganization(organization) {
   };
 }
 
+
+/*
+|--------------------------------------------------------------------------
+| ONE-TIME SUPER ADMIN SETUP
+|--------------------------------------------------------------------------
+|
+| Create the very first Super Admin from Postman.
+| Once one SuperAdmin exists, this endpoint permanently refuses setup.
+|
+*/
+export const setupFirstSuperAdmin = asyncHandler(async (req, res) => {
+  const fullName = clean(req.body.fullName) || 'SaaS Owner';
+  const email = normalizeEmail(req.body.email);
+  const password = String(req.body.password || '');
+
+  if (!email || !password) {
+    throw new ValidationError('Email and password are required.');
+  }
+
+  if (!EMAIL_RE.test(email)) {
+    throw new ValidationError('Email is invalid.');
+  }
+
+  if (password.length < 10) {
+    throw new ValidationError(
+      'Password must be at least 10 characters.'
+    );
+  }
+
+  const existingCount = await SuperAdmin.countDocuments();
+
+  if (existingCount > 0) {
+    return res.status(403).json({
+      success: false,
+      message:
+        'Super Admin setup is already completed. Use the Super Admin login endpoint.',
+    });
+  }
+
+  const superAdmin = await SuperAdmin.create({
+    fullName,
+    email,
+    passwordHash: await bcrypt.hash(password, 12),
+    status: 'active',
+  });
+
+  return res.status(201).json({
+    success: true,
+    message: 'First Super Admin created successfully.',
+    user: publicSuperAdmin(superAdmin),
+  });
+});
+
 export const login = asyncHandler(async (req, res) => {
   const email = normalizeEmail(req.body.email);
   const password = String(req.body.password || '');
