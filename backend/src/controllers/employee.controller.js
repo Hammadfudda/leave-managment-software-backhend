@@ -7,6 +7,7 @@ import Grade from '../models/Grade.js';
 import Department from '../models/Department.js';
 import Designation from '../models/Designation.js';
 import LeaveRequest from '../models/LeaveRequest.js';
+import LeavePolicy from '../models/LeavePolicy.js';
 
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sanitizeUser } from '../utils/tokens.js';
