@@ -7,7 +7,6 @@ const userSchema = new Schema(
   {
     fullName: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-
     // CNIC — also the default login password for a completed employee.
     // Pending CSV employees receive a unique temporary nationalId until Admin
     // fixes their real CNIC.
@@ -16,6 +15,15 @@ const userSchema = new Schema(
     passwordChangedFromDefault: { type: Boolean, default: false },
 
     role: { type: String, enum: ['admin', 'manager', 'employee'], required: true },
+
+    // SaaS tenant ownership.
+    // Existing/demo users remain compatible because null is allowed.
+    organizationId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Organization',
+      default: null,
+      index: true,
+    },
 
     // These fields stay strictly validated by the normal Create Employee
     // controller. They are nullable here only so a CSV record can be imported
@@ -26,7 +34,6 @@ const userSchema = new Schema(
     canApproveOtherDepartments: { type: Boolean, default: false },
 
     employeeId: { type: String, required: true, unique: true },
-
     cnic: { type: String, default: '' },
     designation: { type: String, default: '' },
     department: { type: String, default: '' },
@@ -44,13 +51,11 @@ const userSchema = new Schema(
       type: [String],
       default: [],
     },
-
     status: {
       type: String,
       enum: ['active', 'inactive', 'pending_deletion'],
       default: 'active',
     },
-
     deactivatedAt: { type: Date, default: null },
     scheduledPurgeAt: { type: Date, default: null },
     removedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
@@ -59,7 +64,6 @@ const userSchema = new Schema(
     lockedUntil: { type: Date, default: null },
     refreshTokenHash: { type: String, default: null },
     lastLoginAt: { type: Date, default: null },
-
     // Password reset
     passwordResetTokenHash: { type: String, default: null },
     passwordResetExpires: { type: Date, default: null },
@@ -69,5 +73,6 @@ const userSchema = new Schema(
 
 userSchema.index({ managerId: 1 });
 userSchema.index({ department: 1 });
+userSchema.index({ organizationId: 1, role: 1, status: 1 });
 
 export default mongoose.model('User', userSchema);

@@ -7,6 +7,7 @@ import policyRoutes from './policy.routes.js';
 import teamRoutes from './team.routes.js';
 import notificationRoutes from './notification.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
+import superAdminRoutes from './superAdmin.routes.js';
 
 import {
   gradeRoutes,
@@ -14,7 +15,6 @@ import {
   designationRoutes,
   roleRoutes,
 } from './taxonomy.routes.js';
-
 import {
   reportRoutes,
   calendarRoutes,
@@ -29,6 +29,8 @@ router.get('/health', (req, res) => {
     status: 'ok',
   });
 });
+
+router.use('/super-admin', superAdminRoutes);
 
 router.use('/auth', authRoutes);
 router.use('/employees', employeeRoutes);
