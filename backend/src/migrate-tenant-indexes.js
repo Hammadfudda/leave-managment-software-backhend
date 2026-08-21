@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import dns from 'node:dns';
 
 import {
   connectDB,
@@ -8,6 +9,18 @@ import Department from './models/Department.js';
 import Designation from './models/Designation.js';
 import Grade from './models/Grade.js';
 import RoleLabel from './models/RoleLabel.js';
+
+/*
+ * Some Windows/router DNS setups resolve MongoDB SRV records in nslookup
+ * but Node's c-ares resolver intermittently returns ECONNREFUSED.
+ *
+ * This affects only this one-off migration process.
+ * Use public DNS servers for this script before connecting to MongoDB.
+ */
+dns.setServers([
+  '8.8.8.8',
+  '1.1.1.1',
+]);
 
 async function dropIfPresent(model, indexName) {
   const indexes = await model.collection.indexes();
@@ -26,16 +39,6 @@ async function dropIfPresent(model, indexName) {
 async function run() {
   await connectDB();
 
-  /*
-   * Current pre-SaaS schemas use name: { unique: true }.
-   * That creates a global name_1 unique index.
-   *
-   * SaaS needs Company A and Company B to both be able to create:
-   * Engineering / Manager / Grade A, etc.
-   *
-   * This migration ONLY removes those four known global indexes.
-   * It does not delete application data.
-   */
   await dropIfPresent(Department, 'name_1');
   await dropIfPresent(Designation, 'name_1');
   await dropIfPresent(Grade, 'name_1');
