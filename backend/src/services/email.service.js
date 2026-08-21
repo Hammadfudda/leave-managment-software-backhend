@@ -63,9 +63,8 @@ export const templates = {
        <p>An account has been created for you on the Leave Management System.</p>
        <p>
          <strong>Email:</strong> ${user.email}<br/>
-         <strong>Temporary password:</strong> your CNIC (${user.cnic})
-       </p>
-       <p>Please sign in and change your password.</p>
+         <strong> password:</strong> your CNIC (${user.cnic})
+       </p>  
        <p><a href="${process.env.CLIENT_URL}">Open the portal</a></p>`,
     ),
 
