@@ -3,23 +3,70 @@ import User from '../models/User.js';
 
 /*
 |--------------------------------------------------------------------------
-| POLICY APPLICANT SCOPE
+| APPLICANT ELIGIBILITY
 |--------------------------------------------------------------------------
 |
-| approvalRouting.grade / department / designation determine
-| WHO the policy applies to.
-|
-| approvalRouting.approverIds determines WHO approves it.
-|
-| These are completely separate concepts.
+| Leave entitlement is Grade-based only.
+| Department / Designation / Role are intentionally not part of policy scope.
 |
 */
+export function getGradeQuotaForUser(
+  policy,
+  user
+) {
+  if (
+    user?.detailsStatus ===
+    'pending'
+  ) {
+    return null;
+  }
+
+  if (!user?.gradeId) {
+    return null;
+  }
+
+  const gradeId =
+    String(
+      user.gradeId
+    );
+
+  const item =
+    (
+      policy
+        .gradeQuotas ||
+      []
+    ).find(
+      (quota) =>
+        String(
+          quota.gradeId?._id ||
+          quota.gradeId
+        ) ===
+        gradeId
+    );
+
+  if (!item) {
+    return null;
+  }
+
+  const yearlyQuota =
+    Number(
+      item.yearlyQuota
+    );
+
+  return (
+    Number.isFinite(
+      yearlyQuota
+    ) &&
+    yearlyQuota > 0
+  )
+    ? yearlyQuota
+    : null;
+}
+
 export function checkApplicantScope(
   policy,
   user
 ) {
-  // CSV-imported employees with incomplete required details must not receive
-  // leave entitlement or become eligible to apply for leave yet.
   if (
     user?.detailsStatus ===
     'pending'
@@ -27,139 +74,56 @@ export function checkApplicantScope(
     return 'Employee details must be completed before leave policies can apply.';
   }
 
-  const routing =
-    policy.approvalRouting || {};
-
-  /*
-   * GRADE
-   *
-   * Policy stores Grade MongoDB ID as string.
-   * User stores gradeId as ObjectId.
-   */
   if (
-    routing.grade &&
-    String(user.gradeId) !==
-      String(routing.grade)
+    getGradeQuotaForUser(
+      policy,
+      user
+    ) === null
   ) {
     return 'This leave type is not available for your grade.';
-  }
-
-  /*
-   * DEPARTMENT
-   */
-  if (
-    routing.department &&
-    routing.department !==
-      user.department
-  ) {
-    return 'This leave type is not available for your department.';
-  }
-
-  /*
-   * DESIGNATION
-   */
-  if (
-    routing.designation &&
-    routing.designation !==
-      user.designation
-  ) {
-    return 'This leave type is not available for your designation.';
-  }
-
-  /*
-   * ROLE
-   */
-  if (
-    policy.applicableRole &&
-    policy.applicableRole !==
-      'All Employees' &&
-    policy.applicableRole !==
-      user.role
-  ) {
-    return 'This leave type is not available for your role.';
   }
 
   return null;
 }
 
-/*
-|--------------------------------------------------------------------------
-| AVAILABLE LEAVE TYPES FOR EMPLOYEE
-|--------------------------------------------------------------------------
-*/
 export async function getAvailableLeaveTypesForUser(
   user
 ) {
+  if (
+    user?.detailsStatus ===
+    'pending'
+  ) {
+    return [];
+  }
+
   const policies =
     await LeavePolicy.find({});
 
-  const matchingPolicies =
-    policies.filter(
-      (policy) =>
-        checkApplicantScope(
-          policy,
-          user
-        ) === null
-    );
-
   return [
     ...new Set(
-      matchingPolicies.map(
-        (policy) =>
-          policy.leaveType
-      )
+      policies
+        .filter(
+          (policy) =>
+            checkApplicantScope(
+              policy,
+              user
+            ) === null
+        )
+        .map(
+          (policy) =>
+            policy.leaveType
+        )
     ),
   ];
 }
 
 /*
-|--------------------------------------------------------------------------
-| ELIGIBLE APPROVERS
-|--------------------------------------------------------------------------
-*/
-export async function getEligibleApprovers(
-  policyDepartmentFilter
-) {
-  const candidates =
-    await User.find({
-      role: {
-        $in: [
-          'manager',
-          'admin',
-        ],
-      },
-
-      status: 'active',
-    });
-
-  return candidates.filter(
-    (user) => {
-      if (
-        user.role ===
-        'admin'
-      ) {
-        return true;
-      }
-
-      if (
-        !policyDepartmentFilter ||
-        policyDepartmentFilter ===
-          'All Departments'
-      ) {
-        return true;
-      }
-
-      if (
-        user.department ===
-        policyDepartmentFilter
-      ) {
-        return true;
-      }
-
-      return (
-        user.canApproveOtherDepartments ===
-        true
-      );
-    }
-  );
+ * Kept for existing endpoint compatibility.
+ * Policy routing can still optionally use a manual manager chain.
+ */
+export async function getEligibleApprovers() {
+  return User.find({
+    role: 'manager',
+    status: 'active',
+  });
 }

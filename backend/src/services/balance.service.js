@@ -8,106 +8,53 @@ import {
 
 import {
   checkApplicantScope,
+  getGradeQuotaForUser,
 } from './eligibility.service.js';
 
-/*
-|--------------------------------------------------------------------------
-| YEAR
-|--------------------------------------------------------------------------
-|
-| Every calendar year has its own ledger row:
-| employeeId + leaveType + year.
-|
-| When 2027 begins, new 2027 rows are initialized from the policies that are
-| valid at that time. 2026 rows remain untouched for history.
-|
-*/
 export function getCurrentLeaveYear(
   date = new Date()
 ) {
   return date.getFullYear();
 }
 
-function isSpecific(
-  value,
-  allLabel
-) {
-  return (
-    value !== null &&
-    value !== undefined &&
-    value !== '' &&
-    value !== allLabel
-  );
-}
-
 /*
-|--------------------------------------------------------------------------
-| POLICY SPECIFICITY
-|--------------------------------------------------------------------------
-|
-| If multiple policies of the same leaveType match an employee, the most
-| specific one wins:
-|
-| Grade       = 4
-| Department  = 2
-| Designation = 1
-|
-*/
-export function policySpecificity(
-  policy
-) {
-  const routing =
-    policy.approvalRouting || {};
-
-  return (
-    (
-      isSpecific(
-        routing.grade,
-        'All Grades'
-      )
-        ? 4
-        : 0
-    ) +
-    (
-      isSpecific(
-        routing.department,
-        'All Departments'
-      )
-        ? 2
-        : 0
-    ) +
-    (
-      isSpecific(
-        routing.designation,
-        'All Designations'
-      )
-        ? 1
-        : 0
-    )
-  );
+ * Compatibility export. With the final model there is one policy per leaveType,
+ * so specificity is no longer needed.
+ */
+export function policySpecificity() {
+  return 1;
 }
 
 export async function getPoliciesForUser(
   user
 ) {
-  const policies =
-    await LeavePolicy.find({});
-
-  const matching =
-    policies.filter(
-      (policy) =>
-        checkApplicantScope(
-          policy,
-          user
-        ) === null
-    );
-
   const bestByType =
     new Map();
 
-  for (
-    const policy of matching
+  if (
+    !user ||
+    user.detailsStatus ===
+      'pending'
   ) {
+    return bestByType;
+  }
+
+  const policies =
+    await LeavePolicy.find({});
+
+  for (
+    const policy
+    of policies
+  ) {
+    if (
+      checkApplicantScope(
+        policy,
+        user
+      ) !== null
+    ) {
+      continue;
+    }
+
     const leaveType =
       String(
         policy.leaveType
@@ -115,25 +62,10 @@ export async function getPoliciesForUser(
         .trim()
         .toLowerCase();
 
-    const existing =
-      bestByType.get(
-        leaveType
-      );
-
-    if (
-      !existing ||
-      policySpecificity(
-        policy
-      ) >
-        policySpecificity(
-          existing
-        )
-    ) {
-      bestByType.set(
-        leaveType,
-        policy
-      );
-    }
+    bestByType.set(
+      leaveType,
+      policy
+    );
   }
 
   return bestByType;
@@ -154,6 +86,15 @@ export async function resolvePolicyForBalance(
     );
   }
 
+  if (
+    user.detailsStatus ===
+    'pending'
+  ) {
+    throw new ValidationError(
+      'Employee details must be completed before leave balances are available.'
+    );
+  }
+
   const policies =
     await getPoliciesForUser(
       user
@@ -161,14 +102,16 @@ export async function resolvePolicyForBalance(
 
   const policy =
     policies.get(
-      String(leaveType)
+      String(
+        leaveType
+      )
         .trim()
         .toLowerCase()
     );
 
   if (!policy) {
     throw new ValidationError(
-      `No leave policy is available for "${leaveType}" for this employee.`
+      `No leave policy is available for "${leaveType}" for this employee grade.`
     );
   }
 
@@ -178,17 +121,19 @@ export async function resolvePolicyForBalance(
   };
 }
 
-/*
-|--------------------------------------------------------------------------
-| SYNC ONE EMPLOYEE
-|--------------------------------------------------------------------------
-|
-| Quota comes ONLY from LeavePolicy.yearlyQuota.
-| Grade's old annual/sick/casual quota fields are not used here.
-|
-| used is never reset inside the same year.
-|--------------------------------------------------------------------------
-*/
+function quotaFor(
+  policy,
+  user
+) {
+  return Number(
+    getGradeQuotaForUser(
+      policy,
+      user
+    ) ||
+    0
+  );
+}
+
 export async function syncPolicyBalancesForUser(
   employeeId,
   year =
@@ -203,25 +148,38 @@ export async function syncPolicyBalancesForUser(
     return [];
   }
 
+  if (
+    user.detailsStatus ===
+    'pending'
+  ) {
+    return [];
+  }
+
   const policies =
     await getPoliciesForUser(
       user
     );
 
-  const applicableTypes =
-    [];
+  const balances = [];
 
   for (
     const [
       leaveType,
       policy,
-    ] of policies.entries()
+    ]
+    of policies.entries()
   ) {
     const quota =
-      Number(
-        policy.yearlyQuota ??
-          0
+      quotaFor(
+        policy,
+        user
       );
+
+    if (
+      quota <= 0
+    ) {
+      continue;
+    }
 
     const balance =
       await LeaveBalance
@@ -247,18 +205,15 @@ export async function syncPolicyBalancesForUser(
           }
         );
 
-    applicableTypes.push(
+    balances.push(
       balance
     );
   }
 
-  /*
-   * Preserve old history rows if policy is removed / employee changes grade,
-   * but make them unavailable in the current year's active entitlement.
-   */
-  const activeLeaveTypes = [
-    ...policies.keys(),
-  ];
+  const activeLeaveTypes =
+    [
+      ...policies.keys(),
+    ];
 
   await LeaveBalance.updateMany(
     {
@@ -276,18 +231,9 @@ export async function syncPolicyBalancesForUser(
     }
   );
 
-  return applicableTypes;
+  return balances;
 }
 
-/*
-|--------------------------------------------------------------------------
-| SYNC ALL ACTIVE USERS
-|--------------------------------------------------------------------------
-|
-| Called after Admin creates, updates or deletes a policy so My Team / Apply
-| Leave reflect the new entitlement immediately.
-|--------------------------------------------------------------------------
-*/
 export async function syncCurrentYearBalancesForAllEmployees(
   year =
     getCurrentLeaveYear()
@@ -295,9 +241,17 @@ export async function syncCurrentYearBalancesForAllEmployees(
   const users =
     await User.find({
       status: 'active',
-    }).select('_id');
+      detailsStatus: {
+        $ne:
+          'pending',
+      },
+    })
+      .select('_id');
 
-  for (const user of users) {
+  for (
+    const user
+    of users
+  ) {
     await syncPolicyBalancesForUser(
       user._id,
       year
@@ -306,15 +260,9 @@ export async function syncCurrentYearBalancesForAllEmployees(
 }
 
 /*
-|--------------------------------------------------------------------------
-| INITIALIZE COMPATIBILITY
-|--------------------------------------------------------------------------
-|
-| Existing employee.controller may call initializeLeaveBalances(employeeId,
-| grade). We keep the function signature compatible, but ignore the Grade
-| object because the source of truth is now LeavePolicy.
-|--------------------------------------------------------------------------
-*/
+ * Existing employee controller calls this signature.
+ * Grade object is intentionally ignored because LeavePolicy is source of truth.
+ */
 export async function initializeLeaveBalances(
   employeeId,
   _grade,
@@ -328,10 +276,8 @@ export async function initializeLeaveBalances(
 }
 
 /*
-|--------------------------------------------------------------------------
-| GRADE CHANGE COMPATIBILITY
-|--------------------------------------------------------------------------
-*/
+ * Existing employee/taxonomy code may still import this.
+ */
 export async function syncQuotasToGrade(
   employeeId,
   _grade,
@@ -344,11 +290,6 @@ export async function syncQuotasToGrade(
   );
 }
 
-/*
-|--------------------------------------------------------------------------
-| READ BALANCES
-|--------------------------------------------------------------------------
-*/
 export async function getLeaveBalancesForUser(
   employeeId,
   year =
@@ -363,22 +304,22 @@ export async function getLeaveBalancesForUser(
   const out = {};
 
   for (
-    const row of balances
+    const row
+    of balances
   ) {
-    out[row.leaveType] = {
+    out[
+      row.leaveType
+    ] = {
       quota:
         row.quota,
-
       used:
         row.used,
-
       remaining:
         Math.max(
           0,
           row.quota -
             row.used
         ),
-
       year:
         row.year,
     };
@@ -393,6 +334,7 @@ async function ensureBalance(
   year
 ) {
   const {
+    user,
     policy,
   } =
     await resolvePolicyForBalance(
@@ -401,10 +343,18 @@ async function ensureBalance(
     );
 
   const quota =
-    Number(
-      policy.yearlyQuota ??
-        0
+    quotaFor(
+      policy,
+      user
     );
+
+  if (
+    quota <= 0
+  ) {
+    throw new ValidationError(
+      `No yearly quota is configured for "${leaveType}" for this employee grade.`
+    );
+  }
 
   return LeaveBalance
     .findOneAndUpdate(
@@ -435,15 +385,6 @@ async function ensureBalance(
     );
 }
 
-/*
-|--------------------------------------------------------------------------
-| DEDUCT
-|--------------------------------------------------------------------------
-|
-| Called only after final approval by approval.service.js.
-| Prevents an approved request from exceeding the yearly entitlement.
-|--------------------------------------------------------------------------
-*/
 export async function deductLeaveBalance(
   employeeId,
   leaveType,
@@ -475,7 +416,10 @@ export async function deductLeaveBalance(
         balance.used
     );
 
-  if (amount > remaining) {
+  if (
+    amount >
+    remaining
+  ) {
     throw new ValidationError(
       `Insufficient ${leaveType} balance. Remaining: ${remaining} day(s), requested: ${amount} day(s).`
     );
@@ -489,15 +433,6 @@ export async function deductLeaveBalance(
   return balance;
 }
 
-/*
-|--------------------------------------------------------------------------
-| RESTORE
-|--------------------------------------------------------------------------
-|
-| Used when an approved leave is shortened/stopped. The unused days are
-| restored to the SAME yearly ledger.
-|--------------------------------------------------------------------------
-*/
 export async function restoreLeaveBalance(
   employeeId,
   leaveType,

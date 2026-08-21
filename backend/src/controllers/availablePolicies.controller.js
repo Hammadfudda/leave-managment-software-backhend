@@ -13,15 +13,8 @@ import {
 | AVAILABLE LEAVE POLICIES FOR CURRENT USER
 |--------------------------------------------------------------------------
 |
-| Used by:
-|   GET /api/leaves/available-policies
-|
-| Important:
-| - Does not create or modify policies.
-| - Does not change approval routing.
-| - Only returns policies that apply to the logged-in employee/manager.
-| - Pending CSV employees receive no available policies until their required
-|   employee details are completed.
+| GET /api/leaves/available-policies
+| Entitlement is Grade-based only.
 |
 */
 export const listAvailablePolicies =
@@ -33,10 +26,6 @@ export const listAvailablePolicies =
       const user =
         req.currentUser;
 
-      /*
-       * CSV pending employees must complete required profile details before
-       * leave entitlement/policies become available.
-       */
       if (
         user?.detailsStatus ===
         'pending'
@@ -49,11 +38,13 @@ export const listAvailablePolicies =
 
       const policies =
         await LeavePolicy.find({})
+          .populate(
+            'gradeQuotas.gradeId',
+            'name'
+          )
           .sort({
             leaveType: 1,
-            createdAt: 1,
-          })
-          .lean();
+          });
 
       const available =
         policies.filter(

@@ -13,7 +13,7 @@ const gradeQuotaSchema = new Schema(
     yearlyQuota: {
       type: Number,
       required: true,
-      min: 0,
+      min: 0.5,
     },
   },
   {
@@ -30,6 +30,11 @@ const leavePolicySchema = new Schema(
       lowercase: true,
     },
 
+    /*
+     * LEGACY COMPATIBILITY:
+     * Kept in schema so existing DB records / older code are not destroyed.
+     * New UI always uses "All Employees" and does not expose this field.
+     */
     applicableRole: {
       type: String,
       enum: [
@@ -42,13 +47,12 @@ const leavePolicySchema = new Schema(
     },
 
     /*
-     * MULTIPLE GRADES PER POLICY.
+     * FINAL SOURCE OF LEAVE ENTITLEMENT.
      *
      * Example:
-     * Annual Leave
-     * Grade A -> 20 days/year
-     * Grade B -> 15 days/year
-     * Grade C -> 12 days/year
+     * Annual Leave:
+     * Grade A -> 14
+     * Grade B -> 18
      */
     gradeQuotas: {
       type: [gradeQuotaSchema],
@@ -70,6 +74,10 @@ const leavePolicySchema = new Schema(
       default: true,
     },
 
+    /*
+     * Kept only for backward compatibility.
+     * New UI does not expose Notice Days.
+     */
     minDaysNoticeRequired: {
       type: Number,
       default: 0,
@@ -86,20 +94,35 @@ const leavePolicySchema = new Schema(
     },
 
     /*
-     * Admin-only Leave Policy option REMOVED.
-     *
+     * Carry-forward belongs to Leave Policy, not Grade.
+     */
+    carryForwardAllowed: {
+      type: Boolean,
+      default: false,
+    },
+
+    maxCarryForwardDays: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    /*
      * true:
-     *   employee's assigned manager is the final approver.
+     * Employee's assigned Manager is final approver.
      *
      * false:
-     *   use approvalRouting.approverIds.
-     *   Those IDs must be active Managers only.
+     * Manual Manager Approval Chain.
      */
     finalApprovalMode: {
       type: Boolean,
       default: true,
     },
 
+    /*
+     * department/designation are kept ONLY so old DB documents stay readable.
+     * New UI/controller writes them as null.
+     */
     approvalRouting: {
       designation: {
         type: String,
@@ -113,11 +136,19 @@ const leavePolicySchema = new Schema(
 
       approverIds: [
         {
-          type:
-            Schema.Types.ObjectId,
+          type: Schema.Types.ObjectId,
           ref: 'User',
         },
       ],
+    },
+
+    /*
+     * Legacy compatibility for old requests/controllers.
+     * New Leave Policy UI never enables admin-only approval.
+     */
+    adminOnlyApproval: {
+      type: Boolean,
+      default: false,
     },
   },
   {
@@ -125,6 +156,12 @@ const leavePolicySchema = new Schema(
   }
 );
 
+/*
+ * No unique index on leaveType here.
+ * This avoids startup/index errors if old DB records contain more than
+ * one policy for the same leave type.
+ * The new controller prevents creating another policy for the same type.
+ */
 leavePolicySchema.index({
   leaveType: 1,
   applicableRole: 1,

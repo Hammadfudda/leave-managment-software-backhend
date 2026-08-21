@@ -7,6 +7,7 @@ import {
 } from '../utils/asyncHandler.js';
 
 import {
+  ConflictError,
   NotFoundError,
   ValidationError,
 } from '../utils/errors.js';
@@ -14,10 +15,6 @@ import {
 import {
   audit,
 } from '../utils/audit.js';
-
-import {
-  getEligibleApprovers,
-} from '../services/eligibility.service.js';
 
 import {
   syncCurrentYearBalancesForAllEmployees,
@@ -28,73 +25,57 @@ import {
   paginated,
 } from '../utils/pagination.js';
 
-function optionalString(
-  value
-) {
-  if (
-    value === undefined ||
-    value === null
-  ) {
-    return null;
-  }
-
-  const text =
-    String(value).trim();
-
-  if (
-    !text ||
-    text ===
-      'All Departments' ||
-    text ===
-      'All Designations'
-  ) {
-    return null;
-  }
-
-  return text;
+function normalizeLeaveType(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
 }
 
-function normalizeGradeQuotas(
+function normalizeDocumentRequirement(
   value
 ) {
+  const allowed = [
+    'required',
+    'optional',
+    'not_required',
+  ];
+
+  return allowed.includes(value)
+    ? value
+    : 'optional';
+}
+
+async function normalizeGradeQuotas(
+  raw
+) {
   if (
-    !Array.isArray(value) ||
-    value.length === 0
+    !Array.isArray(raw) ||
+    raw.length === 0
   ) {
     throw new ValidationError(
-      'Select at least one grade and enter its yearly quota.'
+      'Select at least one grade and yearly quota.'
     );
   }
 
-  const seen =
-    new Set();
+  const seen = new Set();
 
-  return value.map(
-    (row) => {
+  const normalized =
+    raw.map((item) => {
       const gradeId =
         String(
-          row.gradeId ||
+          item?.gradeId ||
           ''
         ).trim();
 
       const yearlyQuota =
         Number(
-          row.yearlyQuota
+          item?.yearlyQuota
         );
 
       if (!gradeId) {
         throw new ValidationError(
-          'Every selected grade must have a valid Grade ID.'
-        );
-      }
-
-      if (
-        seen.has(
-          gradeId
-        )
-      ) {
-        throw new ValidationError(
-          'The same grade cannot be added twice to one leave policy.'
+          'Every selected grade requires a valid grade ID.'
         );
       }
 
@@ -105,7 +86,17 @@ function normalizeGradeQuotas(
         yearlyQuota <= 0
       ) {
         throw new ValidationError(
-          'Every selected grade must have a yearly quota greater than 0.'
+          'Every selected grade needs a yearly quota greater than 0.'
+        );
+      }
+
+      if (
+        seen.has(
+          gradeId
+        )
+      ) {
+        throw new ValidationError(
+          'A grade can only appear once in a leave policy.'
         );
       }
 
@@ -117,159 +108,98 @@ function normalizeGradeQuotas(
         gradeId,
         yearlyQuota,
       };
-    }
-  );
-}
-
-async function validateGrades(
-  gradeQuotas
-) {
-  const ids =
-    gradeQuotas.map(
-      (row) =>
-        row.gradeId
-    );
+    });
 
   const count =
-    await Grade.countDocuments(
-      {
-        _id: {
-          $in: ids,
-        },
-      }
-    );
-
-  if (
-    count !== ids.length
-  ) {
-    throw new ValidationError(
-      'One or more selected grades do not exist in Master Data.'
-    );
-  }
-}
-
-function normalizeRouting(
-  body,
-  finalApprovalMode
-) {
-  const routing =
-    body.approvalRouting ||
-    {};
-
-  return {
-    department:
-      optionalString(
-        routing.department
-      ),
-
-    designation:
-      optionalString(
-        routing.designation
-      ),
-
-    approverIds:
-      finalApprovalMode
-        ? []
-        : [
-            ...new Set(
-              (
-                Array.isArray(
-                  routing.approverIds
-                )
-                  ? routing.approverIds
-                  : []
-              )
-                .map(String)
-                .filter(Boolean)
-            ),
-          ],
-  };
-}
-
-async function validateManagers(
-  approverIds
-) {
-  if (
-    approverIds.length ===
-    0
-  ) {
-    return;
-  }
-
-  const count =
-    await User.countDocuments(
-      {
-        _id: {
-          $in:
-            approverIds,
-        },
-
-        role:
-          'manager',
-
-        status:
-          'active',
-      }
-    );
+    await Grade.countDocuments({
+      _id: {
+        $in:
+          normalized.map(
+            (item) =>
+              item.gradeId
+          ),
+      },
+    });
 
   if (
     count !==
-    approverIds.length
+    normalized.length
   ) {
     throw new ValidationError(
-      'Only active Managers can be selected in Leave Policy routing.'
+      'One or more selected grades do not exist.'
     );
   }
+
+  return normalized;
 }
 
-async function noDuplicate({
-  leaveType,
-  applicableRole,
-  gradeQuotas,
-  approvalRouting,
-  excludeId = null,
-}) {
-  const gradeIds =
-    gradeQuotas.map(
-      (row) =>
-        row.gradeId
-    );
+async function normalizeApproval(
+  body
+) {
+  const finalApprovalMode =
+    body.finalApprovalMode !==
+    false;
 
-  const filter = {
-    leaveType,
-    applicableRole,
-
-    'approvalRouting.department':
-      approvalRouting.department ||
-      null,
-
-    'approvalRouting.designation':
-      approvalRouting.designation ||
-      null,
-
-    'gradeQuotas.gradeId': {
-      $in:
-        gradeIds,
-    },
-  };
-
-  if (excludeId) {
-    filter._id = {
-      $ne:
-        excludeId,
+  if (
+    finalApprovalMode
+  ) {
+    return {
+      finalApprovalMode:
+        true,
+      approverIds: [],
     };
   }
 
-  const duplicate =
-    await LeavePolicy.findOne(
-      filter
-    );
+  const rawIds =
+    body
+      .approvalRouting
+      ?.approverIds;
 
-  if (duplicate) {
+  const approverIds =
+    Array.isArray(
+      rawIds
+    )
+      ? [
+          ...new Set(
+            rawIds
+              .map(String)
+              .filter(Boolean)
+          ),
+        ]
+      : [];
+
+  if (
+    approverIds.length === 0
+  ) {
     throw new ValidationError(
-      'A conflicting leave policy already exists for at least one selected grade with this role, department and designation scope.'
+      'Select at least one manager for the manual approval chain.'
     );
   }
+
+  const managerCount =
+    await User.countDocuments({
+      _id: {
+        $in:
+          approverIds,
+      },
+      role: 'manager',
+      status: 'active',
+    });
+
+  if (
+    managerCount !==
+    approverIds.length
+  ) {
+    throw new ValidationError(
+      'One or more selected approvers are not active managers.'
+    );
+  }
+
+  return {
+    finalApprovalMode:
+      false,
+    approverIds,
+  };
 }
 
 export const listPolicies =
@@ -281,46 +211,18 @@ export const listPolicies =
       const filter = {};
 
       if (
-        req.currentUser
-          .role !==
-        'admin'
-      ) {
-        filter[
-          'approvalRouting.approverIds'
-        ] =
-          req.currentUser
-            ._id;
-      }
-
-      if (
-        req.query.department
-      ) {
-        filter[
-          'approvalRouting.department'
-        ] =
-          req.query.department;
-      }
-
-      if (
         req.query.leaveType
       ) {
         filter.leaveType =
-          String(
+          normalizeLeaveType(
             req.query.leaveType
-          )
-            .trim()
-            .toLowerCase();
+          );
       }
 
-      if (
-        req.query.grade
-      ) {
-        filter[
-          'gradeQuotas.gradeId'
-        ] =
-          req.query.grade;
-      }
-
+      /*
+       * Managers can read policies too.
+       * Policy entitlement is grade-based, not manager-specific.
+       */
       const pagination =
         getPagination(
           req.query
@@ -352,10 +254,9 @@ export const listPolicies =
               pagination.limit
             ),
 
-          LeavePolicy
-            .countDocuments(
-              filter
-            ),
+          LeavePolicy.countDocuments(
+            filter
+          ),
         ]);
 
       res.json({
@@ -376,13 +277,9 @@ export const createPolicy =
       res
     ) => {
       const leaveType =
-        String(
-          req.body
-            .leaveType ||
-            ''
-        )
-          .trim()
-          .toLowerCase();
+        normalizeLeaveType(
+          req.body.leaveType
+        );
 
       if (!leaveType) {
         throw new ValidationError(
@@ -390,86 +287,93 @@ export const createPolicy =
         );
       }
 
+      const existing =
+        await LeavePolicy.findOne({
+          leaveType,
+        })
+          .select('_id')
+          .lean();
+
+      if (existing) {
+        throw new ConflictError(
+          'A leave policy already exists for this leave type. Edit the existing policy instead.'
+        );
+      }
+
       const gradeQuotas =
-        normalizeGradeQuotas(
+        await normalizeGradeQuotas(
           req.body
             .gradeQuotas
         );
 
-      await validateGrades(
-        gradeQuotas
-      );
-
-      const applicableRole =
-        req.body
-          .applicableRole ||
-        'All Employees';
-
-      const finalApprovalMode =
-        req.body
-          .finalApprovalMode !==
-        undefined
-          ? Boolean(
-              req.body
-                .finalApprovalMode
-            )
-          : true;
-
-      const approvalRouting =
-        normalizeRouting(
-          req.body,
-          finalApprovalMode
+      const {
+        finalApprovalMode,
+        approverIds,
+      } =
+        await normalizeApproval(
+          req.body
         );
+
+      const carryForwardAllowed =
+        Boolean(
+          req.body
+            .carryForwardAllowed
+        );
+
+      const maxCarryForwardDays =
+        carryForwardAllowed
+          ? Number(
+              req.body
+                .maxCarryForwardDays ||
+              0
+            )
+          : 0;
 
       if (
-        !finalApprovalMode &&
-        approvalRouting
-          .approverIds
-          .length === 0
+        !Number.isFinite(
+          maxCarryForwardDays
+        ) ||
+        maxCarryForwardDays < 0
       ) {
         throw new ValidationError(
-          'Select at least one Manager or use Assigned Manager Final.'
+          'Max carry forward days must be 0 or greater.'
         );
       }
-
-      await validateManagers(
-        approvalRouting
-          .approverIds
-      );
-
-      await noDuplicate({
-        leaveType,
-        applicableRole,
-        gradeQuotas,
-        approvalRouting,
-      });
 
       const policy =
         await LeavePolicy.create(
           {
             leaveType,
             gradeQuotas,
-            applicableRole,
 
             isPaid:
               req.body.isPaid !==
               undefined
                 ? Boolean(
-                    req.body
-                      .isPaid
+                    req.body.isPaid
                   )
                 : true,
+
+            documentRequirement:
+              normalizeDocumentRequirement(
+                req.body
+                  .documentRequirement
+              ),
+
+            carryForwardAllowed,
+            maxCarryForwardDays,
+
+            finalApprovalMode,
+
+            approvalRouting: {
+              approverIds,
+            },
 
             minDaysNoticeRequired:
               0,
 
-            documentRequirement:
-              req.body
-                .documentRequirement ||
-              'optional',
-
-            finalApprovalMode,
-            approvalRouting,
+            adminOnlyApproval:
+              false,
           }
         );
 
@@ -478,36 +382,24 @@ export const createPolicy =
       await audit({
         actorId:
           req.currentUser._id,
-
         actorName:
-          req.currentUser
-            .fullName,
-
+          req.currentUser.fullName,
         action:
           'CREATE_LEAVE_POLICY',
-
         targetType:
           'LeavePolicy',
-
         targetId:
           policy._id,
-
         leaveType:
           policy.leaveType,
-
-        department:
-          approvalRouting
-            .department,
-
         details:
-          `Created ${policy.leaveType} policy for ${gradeQuotas.length} grade(s)`,
+          `Created ${policy.leaveType} policy with ${gradeQuotas.length} grade quota(s).`,
       });
 
       const populated =
-        await LeavePolicy
-          .findById(
-            policy._id
-          )
+        await LeavePolicy.findById(
+          policy._id
+        )
           .populate(
             'gradeQuotas.gradeId',
             'name'
@@ -547,127 +439,107 @@ export const updatePolicy =
       const leaveType =
         req.body.leaveType !==
         undefined
-          ? String(
-              req.body
-                .leaveType
+          ? normalizeLeaveType(
+              req.body.leaveType
             )
-              .trim()
-              .toLowerCase()
           : policy.leaveType;
 
-      const gradeQuotas =
-        req.body.gradeQuotas !==
-        undefined
-          ? normalizeGradeQuotas(
-              req.body
-                .gradeQuotas
-            )
-          : policy.gradeQuotas.map(
-              (row) => ({
-                gradeId:
-                  String(
-                    row.gradeId
-                  ),
-
-                yearlyQuota:
-                  Number(
-                    row.yearlyQuota
-                  ),
-              })
-            );
-
-      await validateGrades(
-        gradeQuotas
-      );
-
-      const applicableRole =
-        req.body
-          .applicableRole !==
-        undefined
-          ? req.body
-              .applicableRole
-          : policy
-              .applicableRole;
-
-      const finalApprovalMode =
-        req.body
-          .finalApprovalMode !==
-        undefined
-          ? Boolean(
-              req.body
-                .finalApprovalMode
-            )
-          : Boolean(
-              policy
-                .finalApprovalMode
-            );
-
-      let approvalRouting = {
-        department:
-          policy
-            .approvalRouting
-            ?.department ||
-          null,
-
-        designation:
-          policy
-            .approvalRouting
-            ?.designation ||
-          null,
-
-        approverIds:
-          (
-            policy
-              .approvalRouting
-              ?.approverIds ||
-            []
-          ).map(String),
-      };
-
-      if (
-        req.body
-          .approvalRouting !==
-        undefined
-      ) {
-        approvalRouting =
-          normalizeRouting(
-            req.body,
-            finalApprovalMode
-          );
-      }
-
-      if (
-        finalApprovalMode
-      ) {
-        approvalRouting
-          .approverIds =
-          [];
-      }
-
-      if (
-        !finalApprovalMode &&
-        approvalRouting
-          .approverIds
-          .length === 0
-      ) {
+      if (!leaveType) {
         throw new ValidationError(
-          'Select at least one Manager or use Assigned Manager Final.'
+          'Leave type is required.'
         );
       }
 
-      await validateManagers(
-        approvalRouting
-          .approverIds
-      );
+      const clash =
+        await LeavePolicy.findOne({
+          leaveType,
+          _id: {
+            $ne:
+              policy._id,
+          },
+        })
+          .select('_id')
+          .lean();
 
-      await noDuplicate({
-        leaveType,
-        applicableRole,
-        gradeQuotas,
-        approvalRouting,
-        excludeId:
-          policy._id,
-      });
+      if (clash) {
+        throw new ConflictError(
+          'Another leave policy already uses this leave type.'
+        );
+      }
+
+      const gradeQuotas =
+        req.body
+          .gradeQuotas !==
+        undefined
+          ? await normalizeGradeQuotas(
+              req.body
+                .gradeQuotas
+            )
+          : policy
+              .gradeQuotas;
+
+      const {
+        finalApprovalMode,
+        approverIds,
+      } =
+        await normalizeApproval({
+          ...req.body,
+          finalApprovalMode:
+            req.body
+              .finalApprovalMode !==
+            undefined
+              ? req.body
+                  .finalApprovalMode
+              : policy
+                  .finalApprovalMode,
+
+          approvalRouting:
+            req.body
+              .approvalRouting !==
+            undefined
+              ? req.body
+                  .approvalRouting
+              : policy
+                  .approvalRouting,
+        });
+
+      const carryForwardAllowed =
+        req.body
+          .carryForwardAllowed !==
+        undefined
+          ? Boolean(
+              req.body
+                .carryForwardAllowed
+            )
+          : Boolean(
+              policy
+                .carryForwardAllowed
+            );
+
+      const maxCarryForwardDays =
+        carryForwardAllowed
+          ? Number(
+              req.body
+                .maxCarryForwardDays !==
+              undefined
+                ? req.body
+                    .maxCarryForwardDays
+                : policy
+                    .maxCarryForwardDays ||
+                  0
+            )
+          : 0;
+
+      if (
+        !Number.isFinite(
+          maxCarryForwardDays
+        ) ||
+        maxCarryForwardDays < 0
+      ) {
+        throw new ValidationError(
+          'Max carry forward days must be 0 or greater.'
+        );
+      }
 
       policy.leaveType =
         leaveType;
@@ -675,22 +547,15 @@ export const updatePolicy =
       policy.gradeQuotas =
         gradeQuotas;
 
-      policy.applicableRole =
-        applicableRole;
-
       if (
         req.body.isPaid !==
         undefined
       ) {
         policy.isPaid =
           Boolean(
-            req.body
-              .isPaid
+            req.body.isPaid
           );
       }
-
-      policy.minDaysNoticeRequired =
-        0;
 
       if (
         req.body
@@ -698,15 +563,30 @@ export const updatePolicy =
         undefined
       ) {
         policy.documentRequirement =
-          req.body
-            .documentRequirement;
+          normalizeDocumentRequirement(
+            req.body
+              .documentRequirement
+          );
       }
+
+      policy.carryForwardAllowed =
+        carryForwardAllowed;
+
+      policy.maxCarryForwardDays =
+        maxCarryForwardDays;
 
       policy.finalApprovalMode =
         finalApprovalMode;
 
-      policy.approvalRouting =
-        approvalRouting;
+      policy.approvalRouting = {
+        approverIds,
+      };
+
+      policy.minDaysNoticeRequired =
+        0;
+
+      policy.adminOnlyApproval =
+        false;
 
       await policy.save();
 
@@ -715,36 +595,24 @@ export const updatePolicy =
       await audit({
         actorId:
           req.currentUser._id,
-
         actorName:
-          req.currentUser
-            .fullName,
-
+          req.currentUser.fullName,
         action:
           'EDIT_LEAVE_POLICY',
-
         targetType:
           'LeavePolicy',
-
         targetId:
           policy._id,
-
         leaveType:
           policy.leaveType,
-
-        department:
-          approvalRouting
-            .department,
-
         details:
-          `Updated ${policy.leaveType} policy for ${gradeQuotas.length} grade(s)`,
+          `Updated ${policy.leaveType} policy with ${policy.gradeQuotas.length} grade quota(s).`,
       });
 
       const populated =
-        await LeavePolicy
-          .findById(
-            policy._id
-          )
+        await LeavePolicy.findById(
+          policy._id
+        )
           .populate(
             'gradeQuotas.gradeId',
             'name'
@@ -792,29 +660,21 @@ export const deletePolicy =
       await audit({
         actorId:
           req.currentUser._id,
-
         actorName:
-          req.currentUser
-            .fullName,
-
+          req.currentUser.fullName,
         action:
           'DELETE_LEAVE_POLICY',
-
         targetType:
           'LeavePolicy',
-
         targetId:
           policyId,
-
         leaveType,
-
         details:
           `Deleted ${leaveType} policy`,
       });
 
       res.json({
         success: true,
-
         message:
           'Leave policy deleted successfully.',
       });
@@ -827,32 +687,35 @@ export const listEligibleApprovers =
       _req,
       res
     ) => {
-      const managers =
-        await getEligibleApprovers();
+      const approvers =
+        await User.find({
+          role: 'manager',
+          status: 'active',
+        })
+          .select(
+            '_id fullName email role department designation'
+          )
+          .sort({
+            fullName: 1,
+          });
 
       res.json({
         success: true,
-
         data:
-          managers.map(
-            (user) => ({
+          approvers.map(
+            (manager) => ({
               id:
-                user._id,
-
+                manager._id,
               fullName:
-                user.fullName,
-
+                manager.fullName,
               email:
-                user.email,
-
+                manager.email,
               role:
-                user.role,
-
+                manager.role,
               department:
-                user.department,
-
+                manager.department,
               designation:
-                user.designation,
+                manager.designation,
             })
           ),
       });
