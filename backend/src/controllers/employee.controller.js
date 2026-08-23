@@ -19,7 +19,6 @@ import {
   initializeLeaveBalances,
   syncQuotasToGrade,
   getLeaveBalancesForUser,
-  CORE_LEAVE_TYPES,
 } from '../services/balance.service.js';
 import {
   sendEmail,
