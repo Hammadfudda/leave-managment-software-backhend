@@ -173,6 +173,24 @@ export const templates = {
             Open the portal
           </a>
         </p>
+
+        <p
+          style="
+            margin-top:20px;
+            padding:12px 14px;
+            background:#f8fafc;
+            border:1px solid #e2e8f0;
+            border-radius:8px;
+            color:#475569;
+            font-size:13px;
+          "
+        >
+          If this email appears in your Spam or Junk folder,
+          please click or tap <strong>Not Spam</strong>
+          (or <strong>Mark as not spam</strong>) and add this
+          sender to your contacts so future Leave Management
+          emails can reach your inbox.
+        </p>
       `,
     ),
 
@@ -219,6 +237,7 @@ export const templates = {
           Employees and leave settings.
         </p>
 
+
         <p
           style="
             margin-top:20px;
@@ -231,10 +250,10 @@ export const templates = {
           "
         >
           If this email appears in your Spam or Junk folder,
-          please mark it as
-          <strong>Not Spam</strong>
-          and add this sender to your contacts so future
-          Leave Management notifications can reach your inbox.
+          please click or tap <strong>Not Spam</strong>
+          (or <strong>Mark as not spam</strong>) and add this
+          sender to your contacts so future Leave Management
+          emails can reach your inbox.
         </p>
       `,
     ),
