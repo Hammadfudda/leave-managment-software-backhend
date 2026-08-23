@@ -1,36 +1,30 @@
 import bcrypt from 'bcryptjs';
 import { parse } from 'csv-parse/sync';
 import { Parser } from 'json2csv';
-
 import User from '../models/User.js';
 import Grade from '../models/Grade.js';
 import Department from '../models/Department.js';
 import Designation from '../models/Designation.js';
 import LeaveRequest from '../models/LeaveRequest.js';
-import LeavePolicy from '../models/LeavePolicy.js';
-
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sanitizeUser } from '../utils/tokens.js';
 import { audit } from '../utils/audit.js';
 import { getPagination, paginated } from '../utils/pagination.js';
-
 import {
   ConflictError,
   NotFoundError,
   ValidationError,
 } from '../utils/errors.js';
-
 import {
   initializeLeaveBalances,
   syncQuotasToGrade,
   getLeaveBalancesForUser,
+  CORE_LEAVE_TYPES,
 } from '../services/balance.service.js';
-
 import {
   sendEmail,
   templates,
 } from '../services/email.service.js';
-
 import {
   emailAdmins,
 } from '../services/notification.service.js';
@@ -102,8 +96,7 @@ function buildEmployeeFilter(
   }
 
   if (query.role) {
-    filter.role =
-      query.role;
+    filter.role = query.role;
   }
 
   if (query.status) {
@@ -218,7 +211,7 @@ function formatCsvErrors(
 }
 
 /* =========================================================
-   EMPLOYEE LIST
+   EMPLOYEE LIST / DETAILS
 ========================================================= */
 
 export const listEmployees =
@@ -262,7 +255,6 @@ export const listEmployees =
 
       res.json({
         success: true,
-
         ...paginated(
           users.map(
             sanitizeUser
@@ -276,10 +268,6 @@ export const listEmployees =
       });
     }
   );
-
-/* =========================================================
-   GET CURRENT USER
-========================================================= */
 
 export const getMe =
   asyncHandler(
@@ -295,28 +283,60 @@ export const getMe =
         throw new NotFoundError();
       }
 
-      const balances =
-        await getLeaveBalancesForUser(
+      const [
+        balances,
+        manager,
+      ] = await Promise.all([
+        getLeaveBalancesForUser(
           user._id
-        );
+        ),
+
+        user.managerId
+          ? User.findById(
+              user.managerId
+            )
+              .select(
+                '_id fullName email designation department status'
+              )
+              .lean()
+          : Promise.resolve(
+              null
+            ),
+      ]);
 
       res.json({
         success: true,
-
         data: {
           ...sanitizeUser(
             user
           ),
-
           balances,
+
+          /*
+           * Keep managerId untouched for existing routing logic,
+           * but also return display-ready manager information so
+           * Profile does not depend on the employee list being loaded.
+           */
+          manager: manager
+            ? {
+                _id:
+                  manager._id,
+                fullName:
+                  manager.fullName,
+                email:
+                  manager.email,
+                designation:
+                  manager.designation,
+                department:
+                  manager.department,
+                status:
+                  manager.status,
+              }
+            : null,
         },
       });
     }
   );
-
-/* =========================================================
-   GET EMPLOYEE
-========================================================= */
 
 export const getEmployee =
   asyncHandler(
@@ -347,20 +367,50 @@ export const getEmployee =
         throw new NotFoundError();
       }
 
-      const balances =
-        await getLeaveBalancesForUser(
+      const [
+        balances,
+        manager,
+      ] = await Promise.all([
+        getLeaveBalancesForUser(
           user._id
-        );
+        ),
+
+        user.managerId
+          ? User.findById(
+              user.managerId
+            )
+              .select(
+                '_id fullName email designation department status'
+              )
+              .lean()
+          : Promise.resolve(
+              null
+            ),
+      ]);
 
       res.json({
         success: true,
-
         data: {
           ...sanitizeUser(
             user
           ),
-
           balances,
+          manager: manager
+            ? {
+                _id:
+                  manager._id,
+                fullName:
+                  manager.fullName,
+                email:
+                  manager.email,
+                designation:
+                  manager.designation,
+                department:
+                  manager.department,
+                status:
+                  manager.status,
+              }
+            : null,
         },
       });
     }
@@ -410,185 +460,67 @@ export const createEmployee =
         );
       }
 
-      if (
-        !EMAIL_RE.test(
-          normalize(
-            body.email
-          )
-        )
-      ) {
-        throw new ValidationError(
-          'Invalid email format.'
-        );
-      }
-
-      if (
-        !CNIC_RE.test(
-          clean(
-            body.cnic
-          )
-        )
-      ) {
-        throw new ValidationError(
-          'Invalid CNIC format. Use 12345-1234567-1.'
-        );
-      }
-
-      if (
-        ![
-          'employee',
-          'manager',
-        ].includes(
-          normalize(
-            body.role
-          )
-        )
-      ) {
-        throw new ValidationError(
-          'Role must be employee or manager.'
-        );
-      }
-
-      if (
-        !isValidDateOnly(
-          body.dateOfJoining
-        )
-      ) {
-        throw new ValidationError(
-          'Invalid date of joining. Use YYYY-MM-DD.'
-        );
-      }
-
       const duplicate =
         await User.findOne({
           $or: [
             {
               email:
-                normalize(
+                String(
                   body.email
-                ),
+                ).toLowerCase(),
             },
-
             {
               nationalId:
-                clean(
-                  body.cnic
-                ),
+                body.cnic,
             },
-
-            {
-              cnic:
-                clean(
-                  body.cnic
-                ),
-            },
-
             {
               employeeId:
-                clean(
-                  body.employeeId
-                ),
+                body.employeeId,
             },
           ],
         });
 
       if (duplicate) {
         throw new ConflictError(
-          'An employee with that email, CNIC or Employee ID already exists.'
+          'An employee with that email, CNIC or ID already exists.'
         );
       }
 
-      const [
-        grade,
-        department,
-        designation,
-      ] =
-        await Promise.all([
-          Grade.findById(
-            body.gradeId
-          ),
-
-          Department.findOne({
-            name: {
-              $regex:
-                `^${clean(
-                  body.department
-                ).replace(
-                  /[.*+?^${}()|[\]\\]/g,
-                  '\\$&'
-                )}$`,
-
-              $options: 'i',
-            },
-          }),
-
-          Designation.findOne({
-            name: {
-              $regex:
-                `^${clean(
-                  body.designation
-                ).replace(
-                  /[.*+?^${}()|[\]\\]/g,
-                  '\\$&'
-                )}$`,
-
-              $options: 'i',
-            },
-          }),
-        ]);
+      const grade =
+        await Grade.findById(
+          body.gradeId
+        );
 
       if (!grade) {
         throw new ValidationError(
-          'Selected grade does not exist in Master Data.'
-        );
-      }
-
-      if (!department) {
-        throw new ValidationError(
-          'Selected department does not exist in Master Data.'
-        );
-      }
-
-      if (!designation) {
-        throw new ValidationError(
-          'Selected designation does not exist in Master Data.'
+          'Unknown grade.'
         );
       }
 
       const user =
         await User.create({
           fullName:
-            clean(
-              body.fullName
-            ),
+            body.fullName,
 
           email:
-            normalize(
+            String(
               body.email
-            ),
+            ).toLowerCase(),
 
           nationalId:
-            clean(
-              body.cnic
-            ),
+            body.cnic,
 
           cnic:
-            clean(
-              body.cnic
-            ),
+            body.cnic,
 
           passwordHash:
             await bcrypt.hash(
-              clean(
-                body.cnic
-              ),
+              body.cnic,
               10
             ),
 
           role:
-            normalize(
-              body.role
-            ),
+            body.role,
 
           gradeId:
             grade._id,
@@ -598,9 +530,7 @@ export const createEmployee =
             null,
 
           canApproveOtherDepartments:
-            normalize(
-              body.role
-            ) ===
+            body.role ===
             'manager'
               ? Boolean(
                   body.canApproveOtherDepartments
@@ -608,25 +538,20 @@ export const createEmployee =
               : false,
 
           employeeId:
-            clean(
-              body.employeeId
-            ),
+            body.employeeId,
 
           designation:
-            designation.name,
+            body.designation,
 
           department:
-            department.name,
+            body.department,
 
           phone:
-            clean(
-              body.phone
-            ) ||
-            undefined,
+            body.phone,
 
           dateOfJoining:
             new Date(
-              `${body.dateOfJoining}T00:00:00.000Z`
+              body.dateOfJoining
             ),
 
           profilePhotoUrl:
@@ -638,26 +563,15 @@ export const createEmployee =
         grade
       );
 
-      try {
-        await sendEmail({
-          to: user.email,
-
-          subject:
-            'Your Leave Management account is ready',
-
-          html:
-            templates.accountCreated(
-              user
-            ),
-        });
-      } catch (
-        emailError
-      ) {
-        console.error(
-          'Employee account email failed:',
-          emailError
-        );
-      }
+      await sendEmail({
+        to: user.email,
+        subject:
+          'Your Leave Management account is ready',
+        html:
+          templates.accountCreated(
+            user
+          ),
+      });
 
       await audit({
         actorId:
@@ -687,21 +601,13 @@ export const createEmployee =
           `Created employee ${user.fullName} (${user.employeeId})`,
       });
 
-      const populatedUser =
-        await User.findById(
-          user._id
-        ).populate(
-          'gradeId'
-        );
-
       res
         .status(201)
         .json({
           success: true,
-
           data:
             sanitizeUser(
-              populatedUser
+              user
             ),
         });
     }
@@ -721,148 +627,6 @@ export const updateEmployee =
 
       if (!user) {
         throw new NotFoundError();
-      }
-
-      if (
-        req.body.email !==
-        undefined
-      ) {
-        const email =
-          normalize(
-            req.body.email
-          );
-
-        if (
-          !EMAIL_RE.test(
-            email
-          )
-        ) {
-          throw new ValidationError(
-            'Invalid email format.'
-          );
-        }
-
-        const duplicateEmail =
-          await User.findOne({
-            email,
-
-            _id: {
-              $ne:
-                user._id,
-            },
-          });
-
-        if (
-          duplicateEmail
-        ) {
-          throw new ConflictError(
-            'Another employee already uses this email.'
-          );
-        }
-      }
-
-      if (
-        req.body.employeeId !==
-        undefined
-      ) {
-        const employeeId =
-          clean(
-            req.body.employeeId
-          );
-
-        const duplicateEmployeeId =
-          await User.findOne({
-            employeeId,
-
-            _id: {
-              $ne:
-                user._id,
-            },
-          });
-
-        if (
-          duplicateEmployeeId
-        ) {
-          throw new ConflictError(
-            'Another employee already uses this Employee ID.'
-          );
-        }
-      }
-
-      if (
-        req.body.role !==
-        undefined &&
-        ![
-          'employee',
-          'manager',
-        ].includes(
-          normalize(
-            req.body.role
-          )
-        )
-      ) {
-        throw new ValidationError(
-          'Role must be employee or manager.'
-        );
-      }
-
-      if (
-        req.body.dateOfJoining !==
-          undefined &&
-        !isValidDateOnly(
-          req.body.dateOfJoining
-        )
-      ) {
-        throw new ValidationError(
-          'Invalid date of joining. Use YYYY-MM-DD.'
-        );
-      }
-
-      if (
-        req.body.gradeId
-      ) {
-        const grade =
-          await Grade.findById(
-            req.body.gradeId
-          );
-
-        if (!grade) {
-          throw new ValidationError(
-            'Selected grade does not exist.'
-          );
-        }
-      }
-
-      if (
-        req.body.department
-      ) {
-        const department =
-          await Department.findOne({
-            name:
-              req.body.department,
-          });
-
-        if (!department) {
-          throw new ValidationError(
-            'Selected department does not exist in Master Data.'
-          );
-        }
-      }
-
-      if (
-        req.body.designation
-      ) {
-        const designation =
-          await Designation.findOne({
-            name:
-              req.body.designation,
-          });
-
-        if (!designation) {
-          throw new ValidationError(
-            'Selected designation does not exist in Master Data.'
-          );
-        }
       }
 
       const editable = [
@@ -900,16 +664,16 @@ export const updateEmployee =
           'email'
         ) {
           user.email =
-            normalize(
+            String(
               req.body.email
-            );
+            ).toLowerCase();
         } else if (
           field ===
           'dateOfJoining'
         ) {
           user.dateOfJoining =
             new Date(
-              `${req.body.dateOfJoining}T00:00:00.000Z`
+              req.body.dateOfJoining
             );
         } else if (
           field ===
@@ -957,12 +721,10 @@ export const updateEmployee =
             user.gradeId
           );
 
-        if (grade) {
-          await syncQuotasToGrade(
-            user._id,
-            grade
-          );
-        }
+        await syncQuotasToGrade(
+          user._id,
+          grade
+        );
       }
 
       await audit({
@@ -998,26 +760,18 @@ export const updateEmployee =
           }`,
       });
 
-      const populatedUser =
-        await User.findById(
-          user._id
-        ).populate(
-          'gradeId'
-        );
-
       res.json({
         success: true,
-
         data:
           sanitizeUser(
-            populatedUser
+            user
           ),
       });
     }
   );
 
 /* =========================================================
-   SOFT REMOVE EMPLOYEE
+   SOFT REMOVE / RESTORE
 ========================================================= */
 
 export const removeEmployee =
@@ -1083,7 +837,6 @@ export const removeEmployee =
             status:
               'pending',
           },
-
           {
             $set: {
               status:
@@ -1154,24 +907,13 @@ export const removeEmployee =
           `Removed ${user.fullName}; ${cancelled.modifiedCount} pending request(s) auto-cancelled. Restorable until ${user.scheduledPurgeAt.toISOString()}`,
       });
 
-      try {
-        await emailAdmins(
-          'Employee removed',
-
-          `${user.fullName} (${user.employeeId}) was removed by ${req.currentUser.fullName}. They can be restored until ${user.scheduledPurgeAt.toDateString()}.`
-        );
-      } catch (
-        emailError
-      ) {
-        console.error(
-          'Employee removal email failed:',
-          emailError
-        );
-      }
+      await emailAdmins(
+        'Employee removed',
+        `${user.fullName} (${user.employeeId}) was removed by ${req.currentUser.fullName}. They can be restored until ${user.scheduledPurgeAt.toDateString()}.`
+      );
 
       res.json({
         success: true,
-
         data:
           sanitizeUser(
             user
@@ -1179,10 +921,6 @@ export const removeEmployee =
       });
     }
   );
-
-/* =========================================================
-   RESTORE EMPLOYEE
-========================================================= */
 
 export const restoreEmployee =
   asyncHandler(
@@ -1202,16 +940,6 @@ export const restoreEmployee =
       ) {
         throw new ValidationError(
           'This employee is not pending deletion.'
-        );
-      }
-
-      if (
-        user.scheduledPurgeAt &&
-        new Date() >
-          user.scheduledPurgeAt
-      ) {
-        throw new ValidationError(
-          'The restore window has expired.'
         );
       }
 
@@ -1257,24 +985,13 @@ export const restoreEmployee =
           `Restored ${user.fullName} within the ${RESTORE_WINDOW_DAYS}-day window`,
       });
 
-      try {
-        await emailAdmins(
-          'Employee restored',
-
-          `${user.fullName} (${user.employeeId}) was restored by ${req.currentUser.fullName}.`
-        );
-      } catch (
-        emailError
-      ) {
-        console.error(
-          'Employee restore email failed:',
-          emailError
-        );
-      }
+      await emailAdmins(
+        'Employee restored',
+        `${user.fullName} (${user.employeeId}) was restored by ${req.currentUser.fullName}.`
+      );
 
       res.json({
         success: true,
-
         data:
           sanitizeUser(
             user
@@ -1282,10 +999,6 @@ export const restoreEmployee =
       });
     }
   );
-
-/* =========================================================
-   LIST REMOVED EMPLOYEES
-========================================================= */
 
 export const listRemovedEmployees =
   asyncHandler(
@@ -1368,7 +1081,6 @@ export const listRemovedEmployees =
 
       res.json({
         success: true,
-
         ...paginated(
           data,
           total,
@@ -1389,25 +1101,14 @@ export const exportEmployeesCsv =
   asyncHandler(
     async (req, res) => {
       const users =
-        await User.find({
-          role: {
-            $ne: 'admin',
-          },
-
-          status: {
-            $ne:
-              'pending_deletion',
-          },
-        }).populate(
+        await User.find(
+          {}
+        ).populate(
           'gradeId'
         );
 
       const leaveTypes =
-  (
-    await LeavePolicy.distinct(
-      'leaveType'
-    )
-  ).sort();
+        CORE_LEAVE_TYPES;
 
       const rows =
         await Promise.all(
@@ -1442,17 +1143,14 @@ export const exportEmployeesCsv =
 
                 grade:
                   user.gradeId
-                    ?.name ||
-                  '',
+                    ?.name,
 
                 dateOfJoining:
                   user.dateOfJoining
-                    ? user.dateOfJoining
-                        .toISOString()
-                        .split(
-                          'T'
-                        )[0]
-                    : '',
+                    .toISOString()
+                    .split(
+                      'T'
+                    )[0],
 
                 status:
                   user.status,
@@ -1462,10 +1160,6 @@ export const exportEmployeesCsv =
                   'manager'
                     ? user.canApproveOtherDepartments
                     : '',
-
-                phone:
-                  user.phone ||
-                  '',
               };
 
               for (
@@ -1524,27 +1218,20 @@ export const exportEmployeesCsv =
   );
 
 /* =========================================================
-   STRICT CSV IMPORT
+   CSV IMPORT - STRICT VALIDATION
 
-   RESTRICTIONS:
-   - CSV only
-   - upload middleware max file size
-   - max 500 rows
-   - required headers
-   - required values
-   - valid email
-   - valid CNIC
-   - valid joining date
-   - role only employee/manager
-   - NO admin import
-   - duplicate email blocked
-   - duplicate CNIC blocked
-   - duplicate Employee ID blocked
-   - duplicate rows inside same CSV blocked
-   - Grade must already exist
-   - Department must already exist
-   - Designation must already exist
-   - CSV cannot create Master Data
+   Rules:
+   - CSV only (upload middleware)
+   - max 5 MB (upload middleware)
+   - max 500 data rows
+   - all required columns/values
+   - valid email/CNIC/date
+   - role employee or manager only
+   - no admin imports
+   - email/CNIC/employeeId unique in file and DB
+   - Department/Designation/Grade must already exist
+   - NO automatic master-data creation
+   - validate the full file BEFORE creating any employee
 ========================================================= */
 
 export const importEmployeesCsv =
@@ -1552,7 +1239,7 @@ export const importEmployeesCsv =
     async (req, res) => {
       if (!req.file) {
         throw new ValidationError(
-          'A CSV file is required.'
+          'A .csv file is required.'
         );
       }
 
@@ -1563,12 +1250,9 @@ export const importEmployeesCsv =
           req.file.buffer,
           {
             columns: true,
-
             skip_empty_lines:
               true,
-
             trim: true,
-
             bom: true,
           }
         );
@@ -1594,7 +1278,7 @@ export const importEmployeesCsv =
         MAX_CSV_ROWS
       ) {
         throw new ValidationError(
-          `Maximum ${MAX_CSV_ROWS} employees are allowed in one CSV file. This file contains ${rows.length} rows.`
+          `A maximum of ${MAX_CSV_ROWS} employees can be imported in one CSV file. This file contains ${rows.length} rows.`
         );
       }
 
@@ -1645,7 +1329,6 @@ export const importEmployeesCsv =
               normalize(
                 item.name
               ),
-
               item,
             ]
           )
@@ -1658,7 +1341,6 @@ export const importEmployeesCsv =
               normalize(
                 item.name
               ),
-
               item,
             ]
           )
@@ -1671,7 +1353,6 @@ export const importEmployeesCsv =
               normalize(
                 item.name
               ),
-
               item,
             ]
           )
@@ -1690,15 +1371,7 @@ export const importEmployeesCsv =
 
       const normalizedRows =
         rows.map(
-          (
-            row,
-            index
-          ) => {
-            /*
-             * Row 1 is CSV header,
-             * therefore first data
-             * row is Row 2.
-             */
+          (row, index) => {
             const rowNumber =
               index + 2;
 
@@ -1757,9 +1430,6 @@ export const importEmployeesCsv =
                   ),
               };
 
-            /*
-             * Required values
-             */
             for (
               const column
               of REQUIRED_CSV_COLUMNS
@@ -1779,9 +1449,6 @@ export const importEmployeesCsv =
               }
             }
 
-            /*
-             * Email
-             */
             if (
               normalizedRow.email &&
               !EMAIL_RE.test(
@@ -1797,9 +1464,6 @@ export const importEmployeesCsv =
               });
             }
 
-            /*
-             * CNIC
-             */
             if (
               normalizedRow.cnic &&
               !CNIC_RE.test(
@@ -1815,9 +1479,6 @@ export const importEmployeesCsv =
               });
             }
 
-            /*
-             * Date
-             */
             if (
               normalizedRow.dateOfJoining &&
               !isValidDateOnly(
@@ -1833,9 +1494,6 @@ export const importEmployeesCsv =
               });
             }
 
-            /*
-             * Role restriction
-             */
             if (
               normalizedRow.role &&
               ![
@@ -1850,14 +1508,10 @@ export const importEmployeesCsv =
                   rowNumber,
 
                 reason:
-                  `Role "${normalizedRow.role}" is not allowed. Only employee or manager can be imported.`,
+                  `Role "${normalizedRow.role}" is not allowed. Use only employee or manager.`,
               });
             }
 
-            /*
-             * Department must
-             * already exist.
-             */
             if (
               normalizedRow.department &&
               !departmentMap.has(
@@ -1875,10 +1529,6 @@ export const importEmployeesCsv =
               });
             }
 
-            /*
-             * Designation must
-             * already exist.
-             */
             if (
               normalizedRow.designation &&
               !designationMap.has(
@@ -1896,10 +1546,6 @@ export const importEmployeesCsv =
               });
             }
 
-            /*
-             * Grade must
-             * already exist.
-             */
             if (
               normalizedRow.grade &&
               !gradeMap.has(
@@ -1917,10 +1563,6 @@ export const importEmployeesCsv =
               });
             }
 
-            /*
-             * Duplicate email
-             * inside CSV
-             */
             const previousEmailRow =
               seenEmails.get(
                 normalizedRow.email
@@ -1946,10 +1588,6 @@ export const importEmployeesCsv =
               );
             }
 
-            /*
-             * Duplicate CNIC
-             * inside CSV
-             */
             const previousCnicRow =
               seenCnics.get(
                 normalizedRow.cnic
@@ -1975,12 +1613,6 @@ export const importEmployeesCsv =
               );
             }
 
-            /*
-             * Employee ID is
-             * case-insensitive
-             * for CSV duplicate
-             * checking.
-             */
             const employeeIdKey =
               normalize(
                 normalizedRow.employeeId
@@ -2000,7 +1632,7 @@ export const importEmployeesCsv =
                   rowNumber,
 
                 reason:
-                  `Duplicate Employee ID "${normalizedRow.employeeId}" inside CSV. Already used on row ${previousEmployeeIdRow}.`,
+                  `Duplicate employeeId "${normalizedRow.employeeId}" inside CSV. Already used on row ${previousEmployeeIdRow}.`,
               });
             } else if (
               employeeIdKey
@@ -2015,11 +1647,6 @@ export const importEmployeesCsv =
           }
         );
 
-      /*
-       * Only query DB duplicates
-       * if basic CSV validation
-       * passed.
-       */
       if (
         errors.length === 0
       ) {
@@ -2049,24 +1676,23 @@ export const importEmployeesCsv =
                   $in: emails,
                 },
               },
-
               {
-                nationalId: {
-                  $in: cnics,
-                },
+                nationalId:
+                  {
+                    $in: cnics,
+                  },
               },
-
               {
                 cnic: {
                   $in: cnics,
                 },
               },
-
               {
-                employeeId: {
-                  $in:
-                    employeeIds,
-                },
+                employeeId:
+                  {
+                    $in:
+                      employeeIds,
+                  },
               },
             ],
           })
@@ -2092,7 +1718,6 @@ export const importEmployeesCsv =
                 clean(
                   user.nationalId
                 ),
-
                 clean(
                   user.cnic
                 ),
@@ -2160,12 +1785,6 @@ export const importEmployeesCsv =
         }
       }
 
-      /*
-       * STOP entire import.
-       *
-       * No employees have
-       * been created yet.
-       */
       if (
         errors.length
       ) {
@@ -2173,7 +1792,6 @@ export const importEmployeesCsv =
           formatCsvErrors(
             errors
           ),
-
           {
             csvErrors:
               errors,
@@ -2182,129 +1800,98 @@ export const importEmployeesCsv =
       }
 
       /*
-       * Every CSV row is valid
-       * at this point.
+       * IMPORTANT:
+       * No database writes happen before this point.
+       * Therefore validation errors cannot produce a partial import.
        */
+
       const createdUsers =
         [];
 
-      try {
-        for (
-          const row
-          of normalizedRows
-        ) {
-          const department =
-            departmentMap.get(
-              normalize(
-                row.department
-              )
-            );
-
-          const designation =
-            designationMap.get(
-              normalize(
-                row.designation
-              )
-            );
-
-          const grade =
-            gradeMap.get(
-              normalize(
-                row.grade
-              )
-            );
-
-          const newUser =
-            await User.create({
-              fullName:
-                row.fullName,
-
-              email:
-                row.email,
-
-              nationalId:
-                row.cnic,
-
-              cnic:
-                row.cnic,
-
-              passwordHash:
-                await bcrypt.hash(
-                  row.cnic,
-                  10
-                ),
-
-              role:
-                row.role,
-
-              designation:
-                designation.name,
-
-              department:
-                department.name,
-
-              gradeId:
-                grade._id,
-
-              employeeId:
-                row.employeeId,
-
-              phone:
-                row.phone ||
-                undefined,
-
-              dateOfJoining:
-                new Date(
-                  `${row.dateOfJoining}T00:00:00.000Z`
-                ),
-
-              managerId:
-                null,
-
-              canApproveOtherDepartments:
-                false,
-            });
-
-          await initializeLeaveBalances(
-            newUser._id,
-            grade
-          );
-
-          createdUsers.push(
-            newUser
-          );
-        }
-      } catch (
-        creationError
+      for (
+        const row
+        of normalizedRows
       ) {
-        /*
-         * Validation was atomic,
-         * but a DB/server failure
-         * during creation could
-         * theoretically happen
-         * after some rows.
-         *
-         * Roll back users created
-         * during this import.
-         */
-        if (
-          createdUsers.length >
-          0
-        ) {
-          const ids =
-            createdUsers.map(
-              (user) =>
-                user._id
-            );
+        const department =
+          departmentMap.get(
+            normalize(
+              row.department
+            )
+          );
 
-          await User.deleteMany({
-            _id: {
-              $in: ids,
-            },
+        const designation =
+          designationMap.get(
+            normalize(
+              row.designation
+            )
+          );
+
+        const grade =
+          gradeMap.get(
+            normalize(
+              row.grade
+            )
+          );
+
+        const newUser =
+          await User.create({
+            fullName:
+              row.fullName,
+
+            email:
+              row.email,
+
+            nationalId:
+              row.cnic,
+
+            cnic:
+              row.cnic,
+
+            passwordHash:
+              await bcrypt.hash(
+                row.cnic,
+                10
+              ),
+
+            role:
+              row.role,
+
+            designation:
+              designation.name,
+
+            department:
+              department.name,
+
+            gradeId:
+              grade._id,
+
+            employeeId:
+              row.employeeId,
+
+            phone:
+              row.phone ||
+              undefined,
+
+            dateOfJoining:
+              new Date(
+                `${row.dateOfJoining}T00:00:00.000Z`
+              ),
+
+            managerId:
+              null,
+
+            canApproveOtherDepartments:
+              false,
           });
-        }
 
-        throw creationError;
+        await initializeLeaveBalances(
+          newUser._id,
+          grade
+        );
+
+        createdUsers.push(
+          newUser
+        );
       }
 
       await audit({
@@ -2323,7 +1910,7 @@ export const importEmployeesCsv =
           'BulkImport',
 
         details:
-          `Imported ${createdUsers.length} employee(s). Strict validation passed. No Master Data records were auto-created.`,
+          `Imported ${createdUsers.length} employee(s). Strict validation passed. No master-data records were auto-created.`,
       });
 
       res.json({

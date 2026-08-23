@@ -2,62 +2,44 @@ import LeaveRequest from '../models/LeaveRequest.js';
 import LeavePolicy from '../models/LeavePolicy.js';
 import Department from '../models/Department.js';
 import User from '../models/User.js';
-
 import cloudinary from '../config/cloudinary.js';
-
-import {
-  asyncHandler,
-} from '../utils/asyncHandler.js';
-
+import { asyncHandler } from '../utils/asyncHandler.js';
 import {
   ForbiddenError,
   NotFoundError,
   ValidationError,
 } from '../utils/errors.js';
-
-import {
-  audit,
-} from '../utils/audit.js';
-
+import { audit } from '../utils/audit.js';
 import {
   getPagination,
   paginated,
 } from '../utils/pagination.js';
-
 import {
   calcCalendarDays,
   calcWorkingDays,
   getExcludedWeekendDates,
 } from '../utils/dates.js';
-
 import {
   getLeaveBalancesForUser,
 } from '../services/balance.service.js';
-
 import {
   checkApplicantScope,
   getAvailableLeaveTypesForUser,
 } from '../services/eligibility.service.js';
-
 import {
   notifyGatekeeper,
 } from '../services/notification.service.js';
-
 import {
   actOnBehalf,
   approveLeave,
   getCurrentTurnApproverIds,
   isAwaitingAdminDecision,
+  isCurrentTurnApprover,
   isRequiredApprover,
   rejectLeave,
 } from '../services/approval.service.js';
 
-const ATTACHMENT_URL_TTL_SECONDS =
-  10 * 60;
-
-/* =========================================================
-   POLICY RESOLUTION
-========================================================= */
+const ATTACHMENT_URL_TTL_SECONDS = 10 * 60;
 
 async function resolvePolicy(
   leaveType,
@@ -100,38 +82,24 @@ async function resolvePolicy(
   const score = (
     policy
   ) =>
-    (
-      policy
-        .approvalRouting
-        ?.grade
-        ? 4
-        : 0
-    ) +
-    (
-      policy
-        .approvalRouting
-        ?.department
-        ? 2
-        : 0
-    ) +
-    (
-      policy
-        .approvalRouting
-        ?.designation
-        ? 1
-        : 0
-    );
+    (policy.approvalRouting
+      ?.grade
+      ? 4
+      : 0) +
+    (policy.approvalRouting
+      ?.department
+      ? 2
+      : 0) +
+    (policy.approvalRouting
+      ?.designation
+      ? 1
+      : 0);
 
   return scoped.sort(
     (a, b) =>
-      score(b) -
-      score(a)
+      score(b) - score(a)
   )[0];
 }
-
-/* =========================================================
-   APPROVAL CHAIN
-========================================================= */
 
 async function resolveChainFor(
   policy,
@@ -143,7 +111,6 @@ async function resolveChainFor(
     return {
       requiredApproverIds:
         [],
-
       isAdminOnlyDecision:
         true,
     };
@@ -152,14 +119,12 @@ async function resolveChainFor(
   if (
     policy.finalApprovalMode
   ) {
-    const noManagerMessage =
+    const NO_MANAGER =
       'No active Manager is assigned to this employee. Please contact an administrator.';
 
-    if (
-      !user.managerId
-    ) {
+    if (!user.managerId) {
       throw new ValidationError(
-        noManagerMessage
+        NO_MANAGER
       );
     }
 
@@ -176,7 +141,7 @@ async function resolveChainFor(
         'active'
     ) {
       throw new ValidationError(
-        noManagerMessage
+        NO_MANAGER
       );
     }
 
@@ -184,21 +149,16 @@ async function resolveChainFor(
       String(
         manager._id
       ) ===
-      String(
-        user._id
-      )
+      String(user._id)
     ) {
       throw new ValidationError(
-        noManagerMessage
+        NO_MANAGER
       );
     }
 
     return {
       requiredApproverIds:
-        [
-          manager._id,
-        ],
-
+        [manager._id],
       isAdminOnlyDecision:
         false,
     };
@@ -208,17 +168,11 @@ async function resolveChainFor(
     requiredApproverIds:
       policy
         .approvalRouting
-        ?.approverIds ||
-      [],
-
+        .approverIds,
     isAdminOnlyDecision:
       false,
   };
 }
-
-/* =========================================================
-   SATURDAY RULE
-========================================================= */
 
 async function saturdayOffFor(
   departmentName
@@ -236,13 +190,6 @@ async function saturdayOffFor(
   );
 }
 
-/* =========================================================
-   RESPONSE DECORATOR
-
-   IMPORTANT:
-   permanent Cloudinary URL expose nahi hoti.
-========================================================= */
-
 function decorate(
   request,
   viewer
@@ -250,13 +197,10 @@ function decorate(
   const obj =
     request.toObject
       ? request.toObject()
-      : {
-          ...request,
-        };
+      : request;
 
   const viewerId =
-    viewer?._id ??
-    viewer;
+    viewer?._id ?? viewer;
 
   const viewerRole =
     viewer?.role;
@@ -271,34 +215,71 @@ function decorate(
       request
     );
 
+  /*
+   * Never expose Cloudinary's permanent/internal attachment metadata.
+   *
+   * For backward compatibility with the existing Manager/Admin UI,
+   * `attachmentUrl` below is a SHORT-LIVED signed Cloudinary URL
+   * (10 minutes), not a permanent public URL.
+   */
+  const hasAttachment =
+    Boolean(
+      obj.attachmentPublicId
+    );
+
+  let attachmentUrl;
+
+  if (hasAttachment) {
+    const expiresAt =
+      Math.floor(
+        Date.now() / 1000
+      ) +
+      ATTACHMENT_URL_TTL_SECONDS;
+
+    attachmentUrl =
+      cloudinary.utils.private_download_url(
+        obj.attachmentPublicId,
+        obj.attachmentFormat ||
+          '',
+        {
+          resource_type:
+            obj.attachmentResourceType ||
+            'image',
+          type: 'private',
+          expires_at:
+            expiresAt,
+          attachment:
+            false,
+        }
+      );
+  }
+
   delete obj.attachmentUrl;
+  delete obj.attachmentPublicId;
+  delete obj.attachmentResourceType;
+  delete obj.attachmentFormat;
+  delete obj.attachmentBytes;
+  delete obj.attachmentMimeType;
+  delete obj.attachmentVersion;
 
   return {
     ...obj,
-
-    hasAttachment:
-      Boolean(
-        obj.attachmentPublicId
-      ),
-
+    hasAttachment,
+    attachmentUrl,
     currentTurnApproverIds:
       turnIds,
-
     awaitingAdminDecision:
       awaitingAdmin,
-
     isMyTurn:
       awaitingAdmin
-        ? (
-            viewerRole ===
-              'admin' &&
+        ? viewerRole ===
+            'admin' &&
+          String(
+            viewerId
+          ) !==
             String(
-              viewerId
-            ) !==
-              String(
-                request.employeeId
-              )
-          )
+              request.employeeId
+            )
         : viewerId
           ? turnIds.includes(
               String(
@@ -309,16 +290,9 @@ function decorate(
   };
 }
 
-/* =========================================================
-   ROLE BASED LIST SCOPE
-========================================================= */
-
-function scopeFor(
-  user
-) {
+function scopeFor(user) {
   if (
-    user.role ===
-    'admin'
+    user.role === 'admin'
   ) {
     return {};
   }
@@ -333,7 +307,6 @@ function scopeFor(
           employeeId:
             user._id,
         },
-
         {
           requiredApproverIds:
             user._id,
@@ -348,10 +321,6 @@ function scopeFor(
   };
 }
 
-/* =========================================================
-   REQUEST ACCESS
-========================================================= */
-
 function canViewRequest(
   request,
   user
@@ -360,13 +329,10 @@ function canViewRequest(
     String(
       request.employeeId
     ) ===
-    String(
-      user._id
-    );
+    String(user._id);
 
   return (
-    user.role ===
-      'admin' ||
+    user.role === 'admin' ||
     isOwner ||
     isRequiredApprover(
       request,
@@ -374,10 +340,6 @@ function canViewRequest(
     )
   );
 }
-
-/* =========================================================
-   PRIVATE CLOUDINARY UPLOAD
-========================================================= */
 
 function uploadPrivateAttachment(
   file
@@ -392,50 +354,34 @@ function uploadPrivateAttachment(
         'application/pdf';
 
       const stream =
-        cloudinary
-          .uploader
-          .upload_stream(
-            {
-              folder:
-                'leave-management/attachments',
-
-              type:
-                'private',
-
-              resource_type:
-                isPdf
-                  ? 'raw'
-                  : 'image',
-
-              use_filename:
-                false,
-
-              unique_filename:
-                true,
-
-              overwrite:
-                false,
-            },
-
-            (
-              error,
-              result
-            ) => {
-              if (
-                error
-              ) {
-                reject(
-                  error
-                );
-
-                return;
-              }
-
-              resolve(
-                result
-              );
+        cloudinary.uploader.upload_stream(
+          {
+            folder:
+              'leave-management/attachments',
+            type: 'private',
+            resource_type:
+              isPdf
+                ? 'raw'
+                : 'image',
+            use_filename:
+              false,
+            unique_filename:
+              true,
+            overwrite:
+              false,
+          },
+          (
+            error,
+            result
+          ) => {
+            if (error) {
+              reject(error);
+              return;
             }
-          );
+
+            resolve(result);
+          }
+        );
 
       stream.end(
         file.buffer
@@ -443,10 +389,6 @@ function uploadPrivateAttachment(
     }
   );
 }
-
-/* =========================================================
-   CLOUDINARY CLEANUP
-========================================================= */
 
 async function deletePrivateAttachment(
   attachment
@@ -459,26 +401,18 @@ async function deletePrivateAttachment(
   }
 
   try {
-    await cloudinary
-      .uploader
-      .destroy(
-        attachment.public_id,
-        {
-          resource_type:
-            attachment
-              .resource_type ||
-            'image',
-
-          type:
-            'private',
-
-          invalidate:
-            true,
-        }
-      );
-  } catch (
-    error
-  ) {
+    await cloudinary.uploader.destroy(
+      attachment.public_id,
+      {
+        resource_type:
+          attachment
+            .resource_type ||
+          'image',
+        type: 'private',
+        invalidate: true,
+      }
+    );
+  } catch (error) {
     console.error(
       'Cloudinary cleanup failed:',
       error
@@ -486,16 +420,9 @@ async function deletePrivateAttachment(
   }
 }
 
-/* =========================================================
-   LIST LEAVE REQUESTS
-========================================================= */
-
 export const listLeaveRequests =
   asyncHandler(
-    async (
-      req,
-      res
-    ) => {
+    async (req, res) => {
       const filter = {
         ...scopeFor(
           req.currentUser
@@ -503,32 +430,28 @@ export const listLeaveRequests =
       };
 
       if (
-        req.query
-          .status
+        req.query.status
       ) {
         filter.status =
           req.query.status;
       }
 
       if (
-        req.query
-          .leaveType
+        req.query.leaveType
       ) {
         filter.leaveType =
           req.query.leaveType;
       }
 
       if (
-        req.query
-          .department
+        req.query.department
       ) {
         filter.department =
           req.query.department;
       }
 
       if (
-        req.query
-          .employeeName
+        req.query.employeeName
       ) {
         filter.employeeName =
           {
@@ -537,23 +460,19 @@ export const listLeaveRequests =
                 req.query
                   .employeeName
               ).trim(),
-
-            $options:
-              'i',
+            $options: 'i',
           };
       }
 
       if (
-        req.query
-          .employeeId
+        req.query.employeeId
       ) {
         filter.employeeId =
           req.query.employeeId;
       }
 
       if (
-        req.query
-          .isExtension !==
+        req.query.isExtension !==
         undefined
       ) {
         filter.isExtension =
@@ -563,8 +482,7 @@ export const listLeaveRequests =
       }
 
       if (
-        req.query
-          .isStopRequest !==
+        req.query.isStopRequest !==
         undefined
       ) {
         filter.isStopRequest =
@@ -574,8 +492,7 @@ export const listLeaveRequests =
       }
 
       if (
-        req.query
-          .isAdminOnlyDecision !==
+        req.query.isAdminOnlyDecision !==
         undefined
       ) {
         filter.isAdminOnlyDecision =
@@ -585,37 +502,29 @@ export const listLeaveRequests =
       }
 
       if (
-        req.query
-          .from ||
-        req.query
-          .to
+        req.query.from ||
+        req.query.to
       ) {
         filter.startDate =
           {};
 
         if (
-          req.query
-            .from
+          req.query.from
         ) {
-          filter
-            .startDate
+          filter.startDate
             .$gte =
             new Date(
-              req.query
-                .from
+              req.query.from
             );
         }
 
         if (
-          req.query
-            .to
+          req.query.to
         ) {
-          filter
-            .startDate
+          filter.startDate
             .$lte =
             new Date(
-              req.query
-                .to
+              req.query.to
             );
         }
       }
@@ -634,8 +543,7 @@ export const listLeaveRequests =
             filter
           )
             .sort({
-              createdAt:
-                -1,
+              createdAt: -1,
             })
             .skip(
               pagination.skip
@@ -651,44 +559,30 @@ export const listLeaveRequests =
 
       res.json({
         success: true,
-
         ...paginated(
           items.map(
-            (
-              request
-            ) =>
+            (request) =>
               decorate(
                 request,
                 req.currentUser
               )
           ),
-
           total,
-
           pagination
         ),
       });
     }
   );
 
-/* =========================================================
-   GET SINGLE LEAVE
-========================================================= */
-
 export const getLeaveRequest =
   asyncHandler(
-    async (
-      req,
-      res
-    ) => {
+    async (req, res) => {
       const request =
         await LeaveRequest.findById(
           req.params.id
         );
 
-      if (
-        !request
-      ) {
+      if (!request) {
         throw new NotFoundError();
       }
 
@@ -703,34 +597,23 @@ export const getLeaveRequest =
 
       res.json({
         success: true,
-
-        data:
-          decorate(
-            request,
-            req.currentUser
-          ),
+        data: decorate(
+          request,
+          req.currentUser
+        ),
       });
     }
   );
 
-/* =========================================================
-   PRIVATE ATTACHMENT TEMPORARY URL
-========================================================= */
-
 export const getAttachmentUrl =
   asyncHandler(
-    async (
-      req,
-      res
-    ) => {
+    async (req, res) => {
       const request =
         await LeaveRequest.findById(
           req.params.id
         );
 
-      if (
-        !request
-      ) {
+      if (!request) {
         throw new NotFoundError();
       }
 
@@ -740,12 +623,15 @@ export const getAttachmentUrl =
           req.currentUser
         )
       ) {
+        /*
+         * Do not confirm that an unauthorized
+         * leave request or attachment exists.
+         */
         throw new NotFoundError();
       }
 
       if (
-        !request
-          .attachmentPublicId
+        !request.attachmentPublicId
       ) {
         throw new NotFoundError(
           'This leave request has no attachment.'
@@ -760,63 +646,40 @@ export const getAttachmentUrl =
         ATTACHMENT_URL_TTL_SECONDS;
 
       const url =
-        cloudinary
-          .utils
-          .private_download_url(
-            request
-              .attachmentPublicId,
-
-            request
-              .attachmentFormat ||
-              '',
-
-            {
-              resource_type:
-                request
-                  .attachmentResourceType ||
-                'image',
-
-              type:
-                'private',
-
-              expires_at:
-                expiresAt,
-
-              attachment:
-                false,
-            }
-          );
+        cloudinary.utils.private_download_url(
+          request.attachmentPublicId,
+          request.attachmentFormat ||
+            '',
+          {
+            resource_type:
+              request.attachmentResourceType ||
+              'image',
+            type: 'private',
+            expires_at:
+              expiresAt,
+            attachment:
+              false,
+          }
+        );
 
       res.json({
         success: true,
-
         data: {
           url,
-
           expiresAt,
-
           expiresInSeconds:
             ATTACHMENT_URL_TTL_SECONDS,
-
           name:
-            request
-              .attachmentName ||
+            request.attachmentName ||
             'attachment',
         },
       });
     }
   );
 
-/* =========================================================
-   AVAILABLE LEAVE TYPES
-========================================================= */
-
 export const listAvailableLeaveTypes =
   asyncHandler(
-    async (
-      req,
-      res
-    ) => {
+    async (req, res) => {
       const types =
         await getAvailableLeaveTypesForUser(
           req.currentUser
@@ -824,7 +687,6 @@ export const listAvailableLeaveTypes =
 
       res.json({
         success: true,
-
         data: [
           ...new Set(
             types
@@ -834,16 +696,9 @@ export const listAvailableLeaveTypes =
     }
   );
 
-/* =========================================================
-   CREATE LEAVE REQUEST
-========================================================= */
-
 export const createLeaveRequest =
   asyncHandler(
-    async (
-      req,
-      res
-    ) => {
+    async (req, res) => {
       const user =
         req.currentUser;
 
@@ -852,8 +707,7 @@ export const createLeaveRequest =
         startDate,
         endDate,
         reason,
-      } =
-        req.body;
+      } = req.body;
 
       if (
         !leaveType ||
@@ -889,10 +743,7 @@ export const createLeaveRequest =
         );
       }
 
-      if (
-        end <
-        start
-      ) {
+      if (end < start) {
         throw new ValidationError(
           'End date cannot be before the start date.'
         );
@@ -911,8 +762,7 @@ export const createLeaveRequest =
         );
 
       if (
-        policy
-          .documentRequirement ===
+        policy.documentRequirement ===
           'required' &&
         !req.file
       ) {
@@ -946,9 +796,7 @@ export const createLeaveRequest =
         null;
 
       try {
-        if (
-          req.file
-        ) {
+        if (req.file) {
           uploadedAttachment =
             await uploadPrivateAttachment(
               req.file
@@ -960,74 +808,56 @@ export const createLeaveRequest =
             {
               employeeId:
                 user._id,
-
               employeeName:
                 user.fullName,
-
               department:
                 user.department,
-
               leaveType,
-
               startDate:
                 start,
-
               endDate:
                 end,
-
               totalDaysRequested:
                 calcCalendarDays(
                   start,
                   end
                 ),
-
               totalWorkingDays,
-
               excludedWeekendDates:
                 getExcludedWeekendDates(
                   start,
                   end,
                   saturdayOff
                 ),
-
               reason,
 
               attachmentName:
                 req.file
                   ?.originalname,
-
               attachmentPublicId:
                 uploadedAttachment
                   ?.public_id,
-
               attachmentResourceType:
                 uploadedAttachment
                   ?.resource_type,
-
               attachmentFormat:
                 uploadedAttachment
                   ?.format,
-
               attachmentBytes:
                 uploadedAttachment
                   ?.bytes,
-
               attachmentMimeType:
                 req.file
                   ?.mimetype,
-
               attachmentVersion:
                 uploadedAttachment
                   ?.version,
 
               ...chain,
-
               approvedByIds:
                 [],
-
               rejectedByIds:
                 [],
-
               status:
                 'pending',
             }
@@ -1041,27 +871,19 @@ export const createLeaveRequest =
         await audit({
           actorId:
             user._id,
-
           actorName:
             user.fullName,
-
           action:
             'SUBMIT_LEAVE',
-
           targetType:
             'LeaveRequest',
-
           targetId:
             request._id,
-
           affectedPerson:
             user.fullName,
-
           department:
             user.department,
-
           leaveType,
-
           details:
             `${totalWorkingDays} working day(s)`,
         });
@@ -1070,16 +892,12 @@ export const createLeaveRequest =
           .status(201)
           .json({
             success: true,
-
-            data:
-              decorate(
-                request,
-                user
-              ),
+            data: decorate(
+              request,
+              user
+            ),
           });
-      } catch (
-        error
-      ) {
+      } catch (error) {
         if (
           uploadedAttachment
         ) {
@@ -1093,16 +911,9 @@ export const createLeaveRequest =
     }
   );
 
-/* =========================================================
-   APPROVE
-========================================================= */
-
 export const approve =
   asyncHandler(
-    async (
-      req,
-      res
-    ) => {
+    async (req, res) => {
       const request =
         await approveLeave(
           req.params.id,
@@ -1112,29 +923,19 @@ export const approve =
 
       res.json({
         success: true,
-
-        data:
-          decorate(
-            request,
-            req.currentUser
-          ),
+        data: decorate(
+          request,
+          req.currentUser
+        ),
       });
     }
   );
 
-/* =========================================================
-   REJECT
-========================================================= */
-
 export const reject =
   asyncHandler(
-    async (
-      req,
-      res
-    ) => {
+    async (req, res) => {
       if (
-        !req.body
-          .comment
+        !req.body.comment
       ) {
         throw new ValidationError(
           'A comment is required when rejecting a request.'
@@ -1150,36 +951,24 @@ export const reject =
 
       res.json({
         success: true,
-
-        data:
-          decorate(
-            request,
-            req.currentUser
-          ),
+        data: decorate(
+          request,
+          req.currentUser
+        ),
       });
     }
   );
 
-/* =========================================================
-   ACT ON BEHALF
-========================================================= */
-
 export const actOnBehalfOf =
   asyncHandler(
-    async (
-      req,
-      res
-    ) => {
+    async (req, res) => {
       const {
         approverId,
         action,
         comment,
-      } =
-        req.body;
+      } = req.body;
 
-      if (
-        !approverId
-      ) {
+      if (!approverId) {
         throw new ValidationError(
           'approverId is required.'
         );
@@ -1209,19 +998,13 @@ export const actOnBehalfOf =
 
       res.json({
         success: true,
-
-        data:
-          decorate(
-            request,
-            req.currentUser
-          ),
+        data: decorate(
+          request,
+          req.currentUser
+        ),
       });
     }
   );
-
-/* =========================================================
-   LOAD ACTIVE OWN APPROVED LEAVE
-========================================================= */
 
 async function loadActiveOwnLeave(
   requestId,
@@ -1232,9 +1015,7 @@ async function loadActiveOwnLeave(
       requestId
     );
 
-  if (
-    !original
-  ) {
+  if (!original) {
     throw new NotFoundError();
   }
 
@@ -1242,9 +1023,7 @@ async function loadActiveOwnLeave(
     String(
       original.employeeId
     ) !==
-    String(
-      user._id
-    )
+    String(user._id)
   ) {
     throw new NotFoundError();
   }
@@ -1275,8 +1054,7 @@ async function loadActiveOwnLeave(
   if (
     new Date(
       effectiveEnd
-    ) <
-    today
+    ) < today
   ) {
     throw new ForbiddenError(
       'This leave has already ended.'
@@ -1286,16 +1064,9 @@ async function loadActiveOwnLeave(
   return original;
 }
 
-/* =========================================================
-   EXTEND LEAVE
-========================================================= */
-
 export const extendLeave =
   asyncHandler(
-    async (
-      req,
-      res
-    ) => {
+    async (req, res) => {
       const user =
         req.currentUser;
 
@@ -1305,11 +1076,23 @@ export const extendLeave =
           user
         );
 
+      const existingExtension =
+        await LeaveRequest.exists({
+          originalRequestId:
+            original._id,
+          isExtension: true,
+        });
+
+      if (existingExtension) {
+        throw new ValidationError(
+          'This leave has already been extended once.'
+        );
+      }
+
       const {
         newEndDate,
         reason,
-      } =
-        req.body;
+      } = req.body;
 
       if (
         !newEndDate ||
@@ -1328,7 +1111,7 @@ export const extendLeave =
       const currentEnd =
         new Date(
           original.actualEndDate ||
-          original.endDate
+            original.endDate
         );
 
       if (
@@ -1342,8 +1125,7 @@ export const extendLeave =
       }
 
       if (
-        end <=
-        currentEnd
+        end <= currentEnd
       ) {
         throw new ValidationError(
           'The new end date must be after the current end date.'
@@ -1398,58 +1180,42 @@ export const extendLeave =
           {
             employeeId:
               user._id,
-
             employeeName:
               user.fullName,
-
             department:
               user.department,
-
             leaveType:
               original.leaveType,
-
             startDate:
               start,
-
             endDate:
               end,
-
             totalDaysRequested:
               calcCalendarDays(
                 start,
                 end
               ),
-
             totalWorkingDays,
-
             excludedWeekendDates:
               getExcludedWeekendDates(
                 start,
                 end,
                 saturdayOff
               ),
-
             reason,
-
             isExtension:
               true,
-
             originalRequestId:
               original._id,
-
             isPaidOverride:
               req.body
                 .isPaidOverride ??
               null,
-
             ...chain,
-
             approvedByIds:
               [],
-
             rejectedByIds:
               [],
-
             status:
               'pending',
           }
@@ -1463,28 +1229,20 @@ export const extendLeave =
       await audit({
         actorId:
           user._id,
-
         actorName:
           user.fullName,
-
         action:
           'EXTEND_LEAVE',
-
         targetType:
           'LeaveRequest',
-
         targetId:
           extension._id,
-
         affectedPerson:
           user.fullName,
-
         department:
           user.department,
-
         leaveType:
           original.leaveType,
-
         details:
           `Extension of ${original._id} to ${end
             .toISOString()
@@ -1495,26 +1253,17 @@ export const extendLeave =
         .status(201)
         .json({
           success: true,
-
-          data:
-            decorate(
-              extension,
-              user
-            ),
+          data: decorate(
+            extension,
+            user
+          ),
         });
     }
   );
 
-/* =========================================================
-   REQUEST STOP LEAVE
-========================================================= */
-
 export const requestStopLeave =
   asyncHandler(
-    async (
-      req,
-      res
-    ) => {
+    async (req, res) => {
       const user =
         req.currentUser;
 
@@ -1524,11 +1273,23 @@ export const requestStopLeave =
           user
         );
 
+      const existingStopRequest =
+        await LeaveRequest.exists({
+          originalRequestId:
+            original._id,
+          isStopRequest: true,
+        });
+
+      if (existingStopRequest) {
+        throw new ValidationError(
+          'A stop-leave request has already been submitted for this leave.'
+        );
+      }
+
       const {
         returnDate,
         reason,
-      } =
-        req.body;
+      } = req.body;
 
       if (
         !returnDate ||
@@ -1569,7 +1330,7 @@ export const requestStopLeave =
         stopDate >=
         new Date(
           original.actualEndDate ||
-          original.endDate
+            original.endDate
         )
       ) {
         throw new ValidationError(
@@ -1594,44 +1355,30 @@ export const requestStopLeave =
           {
             employeeId:
               user._id,
-
             employeeName:
               user.fullName,
-
             department:
               user.department,
-
             leaveType:
               original.leaveType,
-
             startDate:
               original.startDate,
-
             endDate:
               stopDate,
-
             totalDaysRequested:
               0,
-
             totalWorkingDays:
               0,
-
             reason,
-
             isStopRequest:
               true,
-
             originalRequestId:
               original._id,
-
             ...chain,
-
             approvedByIds:
               [],
-
             rejectedByIds:
               [],
-
             status:
               'pending',
           }
@@ -1645,28 +1392,20 @@ export const requestStopLeave =
       await audit({
         actorId:
           user._id,
-
         actorName:
           user.fullName,
-
         action:
           'REQUEST_STOP_LEAVE',
-
         targetType:
           'LeaveRequest',
-
         targetId:
           stopRequest._id,
-
         affectedPerson:
           user.fullName,
-
         department:
           user.department,
-
         leaveType:
           original.leaveType,
-
         details:
           `Requested to return on ${stopDate
             .toISOString()
@@ -1677,30 +1416,20 @@ export const requestStopLeave =
         .status(201)
         .json({
           success: true,
-
-          data:
-            decorate(
-              stopRequest,
-              user
-            ),
+          data: decorate(
+            stopRequest,
+            user
+          ),
         });
     }
   );
 
-/* =========================================================
-   BALANCE
-========================================================= */
-
 export const getBalance =
   asyncHandler(
-    async (
-      req,
-      res
-    ) => {
+    async (req, res) => {
       const {
         employeeId,
-      } =
-        req.params;
+      } = req.params;
 
       const isSelf =
         String(
@@ -1725,9 +1454,7 @@ export const getBalance =
           employeeId
         );
 
-      if (
-        !employee
-      ) {
+      if (!employee) {
         throw new NotFoundError();
       }
 
@@ -1738,9 +1465,11 @@ export const getBalance =
 
       res.json({
         success: true,
-
-        data:
-          balances,
+        data: balances,
       });
     }
   );
+
+export {
+  isCurrentTurnApprover,
+};
