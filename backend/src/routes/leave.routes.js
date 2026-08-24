@@ -16,6 +16,10 @@ import {
   upload,
 } from '../middleware/upload.js';
 
+import {
+  validateNewLeaveRequest,
+} from '../middleware/validateNewLeaveRequest.js';
+
 const router = Router();
 
 router.use(
@@ -52,6 +56,7 @@ router.post(
   upload.single(
     'attachment'
   ),
+  validateNewLeaveRequest,
   leave.createLeaveRequest
 );
 

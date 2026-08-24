@@ -1,6 +1,7 @@
 import { Router } from 'express';
 
 import * as superAdmin from '../controllers/superAdmin.controller.js';
+import * as extras from '../controllers/superAdminExtras.controller.js';
 
 import {
   authenticateSuperAdmin,
@@ -53,6 +54,26 @@ router.patch(
 router.patch(
   '/organizations/:id/reset-admin-password',
   superAdmin.resetClientAdminPassword
+);
+
+router.patch(
+  '/organizations/:id',
+  extras.updateOrganizationDetails
+);
+
+router.get(
+  '/feedback',
+  extras.listFeedbackRequests
+);
+
+router.patch(
+  '/feedback/:id',
+  extras.updateFeedbackRequest
+);
+
+router.post(
+  '/broadcast',
+  extras.broadcastAdminUpdate
 );
 
 export default router;
