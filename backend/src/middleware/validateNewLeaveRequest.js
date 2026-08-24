@@ -68,9 +68,8 @@ export const validateNewLeaveRequest =
         req.currentUser;
 
       /*
-       * This middleware runs AFTER multer.memoryStorage().
-       * That means multipart fields and the optional file are available
-       * in memory, but nothing has been uploaded to Cloudinary yet.
+       * Runs after multer.memoryStorage().
+       * No Cloudinary upload or LeaveRequest.create has happened yet.
        */
 
       const pendingRequest =
@@ -114,6 +113,15 @@ export const validateNewLeaveRequest =
         0
       );
 
+      /*
+       * Latest rule:
+       * An APPROVED leave blocks a new leave only once the leave has started.
+       *
+       * startDate <= today <= actualEndDate/endDate
+       *
+       * A future approved leave does not lock the Apply Leave screen before
+       * its start date.
+       */
       const approvedRequests =
         await LeaveRequest.find({
           employeeId:
@@ -131,13 +139,18 @@ export const validateNewLeaveRequest =
           },
         })
           .select(
-            'leaveType endDate actualEndDate'
+            'leaveType startDate endDate actualEndDate'
           )
           .lean();
 
       const activeApprovedLeave =
         approvedRequests.find(
           (request) => {
+            const start =
+              normalizeDate(
+                request.startDate
+              );
+
             const effectiveEnd =
               normalizeDate(
                 request.actualEndDate ||
@@ -145,7 +158,10 @@ export const validateNewLeaveRequest =
               );
 
             return (
+              start &&
               effectiveEnd &&
+              start <=
+                today &&
               effectiveEnd >=
                 today
             );
@@ -169,7 +185,7 @@ export const validateNewLeaveRequest =
         throw new ValidationError(
           `Your approved ${prettyLeaveType(
             activeApprovedLeave.leaveType
-          )} leave remains active until ${formattedEnd}. You can apply for another leave after it ends.`
+          )} leave is currently active until ${formattedEnd}. You cannot apply for another leave while it is active.`
         );
       }
 

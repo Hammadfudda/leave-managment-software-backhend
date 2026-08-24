@@ -20,6 +20,10 @@ import {
   validateNewLeaveRequest,
 } from '../middleware/validateNewLeaveRequest.js';
 
+import {
+  validateLeaveModification,
+} from '../middleware/validateLeaveModification.js';
+
 const router = Router();
 
 router.use(
@@ -102,6 +106,7 @@ router.post(
     'employee',
     'manager'
   ),
+  validateLeaveModification,
   leave.extendLeave
 );
 
@@ -111,6 +116,7 @@ router.post(
     'employee',
     'manager'
   ),
+  validateLeaveModification,
   leave.requestStopLeave
 );
 
