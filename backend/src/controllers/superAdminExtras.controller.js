@@ -1,3 +1,5 @@
+import mongoose from 'mongoose';
+
 import Organization from '../models/Organization.js';
 import User from '../models/User.js';
 import FeedbackRequest from '../models/FeedbackRequest.js';
@@ -342,8 +344,102 @@ export const updateFeedbackRequest =
 
       await feedback.save();
 
+      /*
+       * The feedback update itself is already safely stored at this point.
+       * Email delivery must NEVER roll back the saved status/note.
+       */
+      let emailSent =
+        false;
+
+      if (
+        feedback.submittedByEmail
+      ) {
+        const prettyStatus =
+          status ===
+          'resolved'
+            ? 'Resolved'
+            : status ===
+                'reviewing'
+              ? 'Reviewing'
+              : 'New';
+
+        const replySection =
+          superAdminNote
+            ? `
+                <p>
+                  <strong>Reply from Nedd Consultant:</strong>
+                </p>
+
+                <div
+                  style="
+                    white-space:pre-wrap;
+                    padding:12px 14px;
+                    background:#f8fafc;
+                    border:1px solid #e2e8f0;
+                    border-radius:8px;
+                  "
+                >
+                  ${escapeHtml(superAdminNote)}
+                </div>
+              `
+            : `
+                <p>
+                  Your request status has been updated to
+                  <strong>${escapeHtml(prettyStatus)}</strong>.
+                </p>
+              `;
+
+        emailSent =
+          await sendEmail({
+            to:
+              feedback.submittedByEmail,
+
+            subject:
+              `Update on your support request — ${feedback.subject}`,
+
+            html:
+              layout(
+                'Support Request Update',
+                `
+                  <p>
+                    Hi ${escapeHtml(
+                      feedback.submittedByName ||
+                        'Client Admin'
+                    )},
+                  </p>
+
+                  <p>
+                    Your request
+                    <strong>${escapeHtml(feedback.subject)}</strong>
+                    has been updated.
+                  </p>
+
+                  <p>
+                    <strong>Status:</strong>
+                    ${escapeHtml(prettyStatus)}
+                  </p>
+
+                  ${replySection}
+
+                  <p>
+                    Regards,
+                    <br/>
+                    Nedd Consultant
+                  </p>
+                `
+              ),
+          });
+      }
+
       return res.json({
         success: true,
+
+        emailSent,
+
+        message:
+          emailSent
+            ? 'Feedback updated and reply email sent successfully.'
+            : 'Feedback updated successfully. Reply email could not be sent.',
 
         data:
           publicFeedback(
@@ -482,6 +578,155 @@ export const broadcastAdminUpdate =
           sent,
 
           failed,
+        },
+      });
+    }
+  );
+
+
+/*
+|--------------------------------------------------------------------------
+| DELETE CLIENT ORGANIZATION
+|--------------------------------------------------------------------------
+|
+| Permanent SaaS-owner action.
+|
+| Deletes every database record that belongs to the selected organization by
+| organizationId, including the Client Admin, Managers, Employees, policies,
+| balances, leave requests, notifications, audit logs, feedback and master data.
+|
+| The Organization document itself is deleted LAST. If an earlier cleanup step
+| fails, the organization record remains so the operation can be retried safely.
+|
+| SuperAdmin and other organizations are never matched by this query.
+|
+*/
+export const deleteClientOrganization =
+  asyncHandler(
+    async (
+      req,
+      res
+    ) => {
+      const organization =
+        await Organization.findById(
+          req.params.id
+        );
+
+      if (
+        !organization
+      ) {
+        throw new NotFoundError(
+          'Organization not found.'
+        );
+      }
+
+      const organizationId =
+        organization._id;
+
+      const usersBeforeDelete =
+        await User.countDocuments({
+          organizationId,
+        });
+
+      /*
+       * Raw collection deletes are intentional here.
+       *
+       * Super Admin routes do not run inside a tenant context, and iterating
+       * MongoDB collections ensures all present/future tenant-owned collections
+       * using organizationId are cleaned without missing a model import.
+       *
+       * Exclusions:
+       * - organizations: deleted explicitly at the end
+       * - superadmins: global SaaS owner accounts, never tenant-owned
+       */
+      const excludedCollections =
+        new Set([
+          'organizations',
+          'superadmins',
+        ]);
+
+      let deletedTenantRecords =
+        0;
+
+      const database =
+        mongoose.connection.db;
+
+      if (
+        !database
+      ) {
+        throw new ValidationError(
+          'Database connection is not ready.'
+        );
+      }
+
+      const collections =
+        await database
+          .listCollections(
+            {},
+            {
+              nameOnly:
+                true,
+            }
+          )
+          .toArray();
+
+      for (
+        const item of
+        collections
+      ) {
+        const collectionName =
+          item.name;
+
+        if (
+          excludedCollections.has(
+            collectionName
+          ) ||
+          collectionName.startsWith(
+            'system.'
+          )
+        ) {
+          continue;
+        }
+
+        const result =
+          await database
+            .collection(
+              collectionName
+            )
+            .deleteMany({
+              organizationId,
+            });
+
+        deletedTenantRecords +=
+          result.deletedCount ||
+          0;
+      }
+
+      await Organization.deleteOne({
+        _id:
+          organizationId,
+      });
+
+      return res.json({
+        success:
+          true,
+
+        message:
+          `Client "${organization.name}" permanently deleted. ${usersBeforeDelete} user account(s) and ${deletedTenantRecords} tenant record(s) were removed.`,
+
+        data: {
+          organizationId:
+            String(
+              organizationId
+            ),
+
+          organizationName:
+            organization.name,
+
+          deletedUsers:
+            usersBeforeDelete,
+
+          deletedTenantRecords,
         },
       });
     }

@@ -61,6 +61,11 @@ router.patch(
   extras.updateOrganizationDetails
 );
 
+router.delete(
+  '/organizations/:id',
+  extras.deleteClientOrganization
+);
+
 router.get(
   '/feedback',
   extras.listFeedbackRequests
