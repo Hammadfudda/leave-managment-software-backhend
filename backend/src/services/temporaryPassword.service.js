@@ -6,7 +6,6 @@ import {
 } from './email.service.js';
 
 const PORTAL_URL = (
-  process.env.CLIENT_URL ||
   process.env.PUBLIC_APP_URL ||
   'https://leave-managment-software.vercel.app'
 ).replace(/\/+$/, '');
