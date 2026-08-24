@@ -5,9 +5,13 @@ import {
 import * as employees from '../controllers/employee.controller.js';
 
 import {
-  completePendingEmployee,
-  importEmployeesCsvPending,
-} from '../controllers/csvImport.controller.js';
+  createEmployeeWithTemporaryPassword,
+} from '../controllers/accountCreation.controller.js';
+
+import {
+  completePendingEmployeeWithTemporaryPassword,
+  importEmployeesCsvWithTemporaryPasswords,
+} from '../controllers/csvImportTemporaryPassword.controller.js';
 
 import {
   authenticate,
@@ -26,25 +30,10 @@ import {
 const router =
   Router();
 
-/*
-|--------------------------------------------------------------------------
-| AUTHENTICATION
-|--------------------------------------------------------------------------
-*/
-
 router.use(
   authenticate,
   loadUser
 );
-
-/*
-|--------------------------------------------------------------------------
-| STATIC ROUTES
-|--------------------------------------------------------------------------
-|
-| These MUST stay before /:id.
-|
-*/
 
 router.get(
   '/me',
@@ -69,14 +58,8 @@ router.post(
   uploadCsv.single(
     'file'
   ),
-  importEmployeesCsvPending
+  importEmployeesCsvWithTemporaryPasswords
 );
-
-/*
-|--------------------------------------------------------------------------
-| EMPLOYEE LIST
-|--------------------------------------------------------------------------
-*/
 
 router.get(
   '/',
@@ -84,40 +67,20 @@ router.get(
 );
 
 /*
-|--------------------------------------------------------------------------
-| CREATE EMPLOYEE
-|--------------------------------------------------------------------------
-|
-| Existing strict Create Employee flow is unchanged.
-|
-*/
-
+ * Direct Employee / Manager creation now uses a cryptographically random
+ * temporary password and forces the user to change it after first login.
+ */
 router.post(
   '/',
   authorize('admin'),
   validateEmployeeManager,
-  employees.createEmployee
+  createEmployeeWithTemporaryPassword
 );
-
-/*
-|--------------------------------------------------------------------------
-| GET ONE EMPLOYEE
-|--------------------------------------------------------------------------
-*/
 
 router.get(
   '/:id',
   employees.getEmployee
 );
-
-/*
-|--------------------------------------------------------------------------
-| UPDATE EMPLOYEE
-|--------------------------------------------------------------------------
-|
-| Existing update controller stays unchanged.
-|
-*/
 
 router.patch(
   '/:id',
@@ -126,38 +89,17 @@ router.patch(
   employees.updateEmployee
 );
 
-/*
-|--------------------------------------------------------------------------
-| COMPLETE PENDING CSV DETAILS
-|--------------------------------------------------------------------------
-|
-| This endpoint is only called after the existing normal update succeeds.
-|
-*/
-
 router.patch(
   '/:id/complete-pending',
   authorize('admin'),
-  completePendingEmployee
+  completePendingEmployeeWithTemporaryPassword
 );
-
-/*
-|--------------------------------------------------------------------------
-| SOFT REMOVE
-|--------------------------------------------------------------------------
-*/
 
 router.patch(
   '/:id/remove',
   authorize('admin'),
   employees.removeEmployee
 );
-
-/*
-|--------------------------------------------------------------------------
-| RESTORE
-|--------------------------------------------------------------------------
-*/
 
 router.patch(
   '/:id/restore',

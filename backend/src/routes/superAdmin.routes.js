@@ -3,6 +3,8 @@ import { Router } from 'express';
 import * as superAdmin from '../controllers/superAdmin.controller.js';
 import * as extras from '../controllers/superAdminExtras.controller.js';
 
+import * as clientAccount from '../controllers/clientAccount.controller.js';
+
 import {
   authenticateSuperAdmin,
   loadSuperAdmin,
@@ -43,7 +45,7 @@ router.get(
 
 router.post(
   '/organizations',
-  superAdmin.createOrganization
+  clientAccount.createOrganizationWithTemporaryPassword
 );
 
 router.patch(
@@ -53,7 +55,7 @@ router.patch(
 
 router.patch(
   '/organizations/:id/reset-admin-password',
-  superAdmin.resetClientAdminPassword
+  clientAccount.resetClientAdminToTemporaryPassword
 );
 
 router.patch(

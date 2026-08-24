@@ -6,21 +6,65 @@ import {
 
 const { Schema } = mongoose;
 
-// Spec Part 2.1
 const userSchema = new Schema(
   {
-    fullName: { type: String, required: true },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    // CNIC — also the default login password for a completed employee.
-    // Pending CSV employees receive a unique temporary nationalId until Admin
-    // fixes their real CNIC.
-    nationalId: { type: String, required: true, unique: true },
-    passwordHash: { type: String, required: true },
-    passwordChangedFromDefault: { type: Boolean, default: false },
-    role: { type: String, enum: ['admin', 'manager', 'employee'], required: true },
+    fullName: {
+      type: String,
+      required: true,
+    },
 
-    // SaaS tenant ownership.
-    // Existing/demo users remain compatible because null is allowed.
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+
+    // CNIC / nationalId is identity data only.
+    // New accounts use a random temporary password, never CNIC as password.
+    nationalId: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+
+    passwordHash: {
+      type: String,
+      required: true,
+    },
+
+    /*
+     * Legacy compatibility flag already used by forgot/reset-password flow.
+     * New mandatory first-login behavior uses mustChangePassword below so
+     * existing users are not unexpectedly forced to change passwords.
+     */
+    passwordChangedFromDefault: {
+      type: Boolean,
+      default: false,
+    },
+
+    /*
+     * Explicit mandatory password-change gate.
+     * Existing database users safely default to false.
+     * Only accounts issued a Temporary Password are set to true.
+     */
+    mustChangePassword: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    role: {
+      type: String,
+      enum: [
+        'admin',
+        'manager',
+        'employee',
+      ],
+      required: true,
+    },
+
     organizationId: {
       type: Schema.Types.ObjectId,
       ref: 'Organization',
@@ -28,54 +72,154 @@ const userSchema = new Schema(
       index: true,
     },
 
-    // These fields stay strictly validated by the normal Create Employee
-    // controller. They are nullable here only so a CSV record can be imported
-    // as "Details Pending" and completed by Admin later.
-    gradeId: { type: Schema.Types.ObjectId, ref: 'Grade', default: null },
-    managerId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    gradeId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Grade',
+      default: null,
+    },
 
-    canApproveOtherDepartments: { type: Boolean, default: false },
-    employeeId: { type: String, required: true, unique: true },
-    cnic: { type: String, default: '' },
-    designation: { type: String, default: '' },
-    department: { type: String, default: '' },
-    phone: { type: String },
-    dateOfJoining: { type: Date, default: null },
+    managerId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+
+    canApproveOtherDepartments: {
+      type: Boolean,
+      default: false,
+    },
+
+    employeeId: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+
+    cnic: {
+      type: String,
+      default: '',
+    },
+
+    designation: {
+      type: String,
+      default: '',
+    },
+
+    department: {
+      type: String,
+      default: '',
+    },
+
+    phone: {
+      type: String,
+    },
+
+    dateOfJoining: {
+      type: Date,
+      default: null,
+    },
 
     detailsStatus: {
       type: String,
-      enum: ['complete', 'pending'],
+      enum: [
+        'complete',
+        'pending',
+      ],
       default: 'complete',
       index: true,
     },
+
     pendingFields: {
       type: [String],
       default: [],
     },
+
     status: {
       type: String,
-      enum: ['active', 'inactive', 'pending_deletion'],
+      enum: [
+        'active',
+        'inactive',
+        'pending_deletion',
+      ],
       default: 'active',
     },
-    deactivatedAt: { type: Date, default: null },
-    scheduledPurgeAt: { type: Date, default: null },
-    removedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
-    profilePhotoUrl: { type: String },
-    failedLoginAttempts: { type: Number, default: 0 },
-    lockedUntil: { type: Date, default: null },
-    refreshTokenHash: { type: String, default: null },
-    lastLoginAt: { type: Date, default: null },
-    // Password reset
-    passwordResetTokenHash: { type: String, default: null },
-    passwordResetExpires: { type: Date, default: null },
+
+    deactivatedAt: {
+      type: Date,
+      default: null,
+    },
+
+    scheduledPurgeAt: {
+      type: Date,
+      default: null,
+    },
+
+    removedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+
+    profilePhotoUrl: {
+      type: String,
+    },
+
+    failedLoginAttempts: {
+      type: Number,
+      default: 0,
+    },
+
+    lockedUntil: {
+      type: Date,
+      default: null,
+    },
+
+    refreshTokenHash: {
+      type: String,
+      default: null,
+    },
+
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    },
+
+    passwordResetTokenHash: {
+      type: String,
+      default: null,
+    },
+
+    passwordResetExpires: {
+      type: Date,
+      default: null,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-userSchema.plugin(tenantPlugin);
+userSchema.plugin(
+  tenantPlugin
+);
 
-userSchema.index({ organizationId: 1, managerId: 1 });
-userSchema.index({ organizationId: 1, department: 1 });
-userSchema.index({ organizationId: 1, role: 1, status: 1 });
+userSchema.index({
+  organizationId: 1,
+  managerId: 1,
+});
 
-export default mongoose.model('User', userSchema);
+userSchema.index({
+  organizationId: 1,
+  department: 1,
+});
+
+userSchema.index({
+  organizationId: 1,
+  role: 1,
+  status: 1,
+});
+
+export default mongoose.model(
+  'User',
+  userSchema
+);
