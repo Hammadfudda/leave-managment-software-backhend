@@ -231,6 +231,17 @@ async function publishJob(
       {
         method:
           'POST',
+
+        /*
+         * Do not let one QStash network call hold the Vercel import request
+         * indefinitely. Failed scheduling stays recoverable through the
+         * existing retry flow.
+         */
+        signal:
+          AbortSignal.timeout(
+            3000
+          ),
+
         headers: {
           Authorization:
             `Bearer ${process.env.QSTASH_TOKEN}`,
