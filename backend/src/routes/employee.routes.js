@@ -14,6 +14,12 @@ import {
 } from '../controllers/csvImportTemporaryPassword.controller.js';
 
 import {
+  previewSmartCsv,
+  commitSmartCsv,
+  retrySmartCsvCredentialEmails,
+} from '../controllers/smartCsvImport.controller.js';
+
+import {
   authenticate,
   authorize,
   loadUser,
@@ -52,6 +58,9 @@ router.get(
   employees.exportEmployeesCsv
 );
 
+/*
+ * Existing import route is preserved for backward compatibility.
+ */
 router.post(
   '/import',
   authorize('admin'),
@@ -61,15 +70,39 @@ router.post(
   importEmployeesCsvWithTemporaryPasswords
 );
 
+/*
+ * New Smart CSV flow.
+ * Preview first, then commit with explicit Admin decisions.
+ */
+router.post(
+  '/import-smart/preview',
+  authorize('admin'),
+  uploadCsv.single(
+    'file'
+  ),
+  previewSmartCsv
+);
+
+router.post(
+  '/import-smart/commit',
+  authorize('admin'),
+  uploadCsv.single(
+    'file'
+  ),
+  commitSmartCsv
+);
+
+router.post(
+  '/import-smart/retry-emails',
+  authorize('admin'),
+  retrySmartCsvCredentialEmails
+);
+
 router.get(
   '/',
   employees.listEmployees
 );
 
-/*
- * Direct Employee / Manager creation now uses a cryptographically random
- * temporary password and forces the user to change it after first login.
- */
 router.post(
   '/',
   authorize('admin'),

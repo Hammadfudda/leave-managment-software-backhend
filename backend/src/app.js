@@ -10,22 +10,31 @@ import {
   notFoundHandler,
 } from './middleware/errorHandler.js';
 
-import { generalLimiter } from './middleware/rateLimit.js';
+import {
+  generalLimiter,
+} from './middleware/rateLimit.js';
 
-const app = express();
+const app =
+  express();
 
-app.set('trust proxy', 1);
+app.set(
+  'trust proxy',
+  1
+);
 
-/*
-|--------------------------------------------------------------------------
-| CORS
-|--------------------------------------------------------------------------
-*/
-
-const envOrigins = (process.env.CLIENT_URL || '')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const envOrigins =
+  (
+    process.env.CLIENT_URL ||
+    ''
+  )
+    .split(',')
+    .map(
+      (origin) =>
+        origin.trim()
+    )
+    .filter(
+      Boolean
+    );
 
 const allowedOrigins = [
   'http://localhost:5173',
@@ -34,25 +43,46 @@ const allowedOrigins = [
 ];
 
 const corsOptions = {
-  origin(origin, callback) {
-    // Postman, curl, server-to-server requests
+  origin(
+    origin,
+    callback
+  ) {
     if (!origin) {
-      return callback(null, true);
+      return callback(
+        null,
+        true
+      );
     }
 
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
+    if (
+      allowedOrigins.includes(
+        origin
+      )
+    ) {
+      return callback(
+        null,
+        true
+      );
     }
 
-    console.warn(`CORS blocked origin: ${origin}`);
-    console.warn('Allowed origins:', allowedOrigins);
+    console.warn(
+      `CORS blocked origin: ${origin}`
+    );
+
+    console.warn(
+      'Allowed origins:',
+      allowedOrigins
+    );
 
     return callback(
-      new Error(`CORS blocked origin: ${origin}`)
+      new Error(
+        `CORS blocked origin: ${origin}`
+      )
     );
   },
 
-  credentials: true,
+  credentials:
+    true,
 
   methods: [
     'GET',
@@ -71,80 +101,102 @@ const corsOptions = {
     'Authorization',
   ],
 
-  optionsSuccessStatus: 204,
+  optionsSuccessStatus:
+    204,
 };
 
-/*
-|--------------------------------------------------------------------------
-| Middleware
-|--------------------------------------------------------------------------
-*/
+app.use(
+  cors(
+    corsOptions
+  )
+);
 
-// IMPORTANT: CORS must come before routes / rate limiter
-app.use(cors(corsOptions));
-
-// Explicitly handle browser preflight requests
-app.options('*', cors(corsOptions));
+app.options(
+  '*',
+  cors(
+    corsOptions
+  )
+);
 
 app.use(
   helmet({
     crossOriginResourcePolicy: {
-      policy: 'cross-origin',
+      policy:
+        'cross-origin',
+    },
+  })
+);
+
+/*
+ * Preserve raw JSON bytes so the public QStash webhook can verify the
+ * Upstash-Signature body hash exactly. All normal routes still receive the
+ * usual parsed req.body object.
+ */
+app.use(
+  express.json({
+    limit:
+      '1mb',
+
+    verify(
+      req,
+      _res,
+      buffer
+    ) {
+      req.rawBody =
+        buffer.toString(
+          'utf8'
+        );
     },
   })
 );
 
 app.use(
-  express.json({
-    limit: '1mb',
+  express.urlencoded({
+    extended:
+      true,
+    limit:
+      '1mb',
   })
 );
 
 app.use(
-  express.urlencoded({
-    extended: true,
-    limit: '1mb',
-  })
+  cookieParser()
 );
 
-app.use(cookieParser());
+app.get(
+  '/api/health',
+  (
+    req,
+    res
+  ) => {
+    res
+      .status(
+        200
+      )
+      .json({
+        success:
+          true,
+        message:
+          'Leave Management API is running',
+      });
+  }
+);
 
-/*
-|--------------------------------------------------------------------------
-| Health Check
-|--------------------------------------------------------------------------
-*/
+app.use(
+  generalLimiter
+);
 
-app.get('/api/health', (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: 'Leave Management API is running',
-  });
-});
+app.use(
+  '/api',
+  routes
+);
 
-/*
-|--------------------------------------------------------------------------
-| Rate Limiting
-|--------------------------------------------------------------------------
-*/
+app.use(
+  notFoundHandler
+);
 
-app.use(generalLimiter);
-
-/*
-|--------------------------------------------------------------------------
-| API Routes
-|--------------------------------------------------------------------------
-*/
-
-app.use('/api', routes);
-
-/*
-|--------------------------------------------------------------------------
-| 404 + Error Handler
-|--------------------------------------------------------------------------
-*/
-
-app.use(notFoundHandler);
-app.use(errorHandler);
+app.use(
+  errorHandler
+);
 
 export default app;

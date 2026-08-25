@@ -1,4 +1,6 @@
-import { Router } from 'express';
+import {
+  Router,
+} from 'express';
 
 import authRoutes from './auth.routes.js';
 import employeeRoutes from './employee.routes.js';
@@ -9,6 +11,7 @@ import notificationRoutes from './notification.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
 import superAdminRoutes from './superAdmin.routes.js';
 import feedbackRoutes from './feedback.routes.js';
+import qstashRoutes from './qstash.routes.js';
 
 import {
   gradeRoutes,
@@ -23,7 +26,8 @@ import {
   auditRoutes,
 } from './misc.routes.js';
 
-const router = Router();
+const router =
+  Router();
 
 router.get(
   '/health',
@@ -32,10 +36,22 @@ router.get(
     res
   ) => {
     res.json({
-      success: true,
-      status: 'ok',
+      success:
+        true,
+      status:
+        'ok',
     });
   }
+);
+
+/*
+ * Public internal webhook.
+ * No user JWT is required because every request is cryptographically verified
+ * against QSTASH_CURRENT_SIGNING_KEY / QSTASH_NEXT_SIGNING_KEY.
+ */
+router.use(
+  '/internal/qstash',
+  qstashRoutes
 );
 
 router.use(
