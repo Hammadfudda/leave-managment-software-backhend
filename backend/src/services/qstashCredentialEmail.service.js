@@ -245,6 +245,19 @@ async function publishJob(
       `${baseUrl}/v2/publish/${destination}`;
 
     try {
+      console.info(
+        '[QStash] publish attempt',
+        {
+          baseUrl,
+          destination,
+          delaySeconds,
+          jobId:
+            String(
+              job._id
+            ),
+        }
+      );
+
       const response =
         await fetch(
           publishUrl,
@@ -303,16 +316,50 @@ async function publishJob(
         );
       }
 
+      console.info(
+        '[QStash] publish success',
+        {
+          baseUrl,
+          status:
+            response.status,
+          jobId:
+            String(
+              job._id
+            ),
+          messageId:
+            String(
+              payload?.messageId ||
+              ''
+            ),
+        }
+      );
+
       return payload;
     } catch (error) {
+      const failureMessage =
+        error instanceof Error
+          ? error.message
+          : String(
+              error
+            );
+
+      console.error(
+        '[QStash] publish failed',
+        {
+          baseUrl,
+          destination,
+          delaySeconds,
+          jobId:
+            String(
+              job._id
+            ),
+          error:
+            failureMessage,
+        }
+      );
+
       failures.push(
-        `${baseUrl}: ${
-          error instanceof Error
-            ? error.message
-            : String(
-                error
-              )
-        }`
+        `${baseUrl}: ${failureMessage}`
       );
     }
   }
@@ -536,6 +583,10 @@ export async function scheduleCredentialEmailJobs(
 }
 
 export async function retryPendingCredentialEmailJobs() {
+  console.info(
+    '[QStash] pending credential retry started'
+  );
+
   const jobs =
     await CredentialEmailJob.find({
       status: {
@@ -553,10 +604,31 @@ export async function retryPendingCredentialEmailJobs() {
           1,
       });
 
-  return scheduleCredentialEmailJobs(
-    jobs.map(
-      (job) =>
-        job._id
-    )
+  console.info(
+    '[QStash] pending credential jobs found',
+    {
+      count:
+        jobs.length,
+    }
   );
+
+  const result =
+    await scheduleCredentialEmailJobs(
+      jobs.map(
+        (job) =>
+          job._id
+      )
+    );
+
+  console.info(
+    '[QStash] pending credential retry finished',
+    {
+      scheduled:
+        result.scheduled,
+      failed:
+        result.failed,
+    }
+  );
+
+  return result;
 }
