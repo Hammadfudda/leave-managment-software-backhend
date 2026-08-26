@@ -108,13 +108,25 @@ export function decryptCredentialEmailJob(
   );
 }
 
-function qstashBaseUrl() {
-  return String(
-    process.env.QSTASH_URL ||
-    'https://qstash.upstash.io'
-  ).replace(
-    /\/+$/,
-    ''
+function qstashBaseUrls() {
+  const configured =
+    String(
+      process.env.QSTASH_URL ||
+      ''
+    )
+      .trim()
+      .replace(
+        /\/+$/,
+        ''
+      );
+
+  return Array.from(
+    new Set(
+      [
+        configured,
+        'https://qstash.upstash.io',
+      ].filter(Boolean)
+    )
   );
 }
 
@@ -222,69 +234,94 @@ async function publishJob(
   const destination =
     credentialEmailDestinationUrl();
 
-  const publishUrl =
-    `${qstashBaseUrl()}/v2/publish/${destination}`;
+  const failures =
+    [];
 
-  const response =
-    await fetch(
-      publishUrl,
-      {
-        method:
-          'POST',
-
-        /*
-         * Do not let one QStash network call hold the Vercel import request
-         * indefinitely. Failed scheduling stays recoverable through the
-         * existing retry flow.
-         */
-        signal:
-          AbortSignal.timeout(
-            15000
-          ),
-
-        headers: {
-          Authorization:
-            `Bearer ${process.env.QSTASH_TOKEN}`,
-          'Content-Type':
-            'application/json',
-          'Upstash-Delay':
-            `${Math.max(0, delaySeconds)}s`,
-          'Upstash-Deduplication-Id':
-            `credential-email-${job._id}`,
-        },
-        body:
-          JSON.stringify({
-            jobId:
-              String(
-                job._id
-              ),
-          }),
-      }
-    );
-
-  let payload =
-    null;
-
-  try {
-    payload =
-      await response.json();
-  } catch {
-    payload =
-      null;
-  }
-
-  if (
-    !response.ok
+  for (
+    const baseUrl of
+    qstashBaseUrls()
   ) {
-    throw new Error(
-      payload?.error ||
-      payload?.message ||
-      `QStash publish failed with HTTP ${response.status}.`
-    );
+    const publishUrl =
+      `${baseUrl}/v2/publish/${destination}`;
+
+    try {
+      const response =
+        await fetch(
+          publishUrl,
+          {
+            method:
+              'POST',
+
+            /*
+             * A broken regional endpoint must not hold the import/recovery
+             * request for a long time. If it fails, the official global
+             * QStash endpoint is tried automatically.
+             */
+            signal:
+              AbortSignal.timeout(
+                8000
+              ),
+
+            headers: {
+              Authorization:
+                `Bearer ${process.env.QSTASH_TOKEN}`,
+              'Content-Type':
+                'application/json',
+              'Upstash-Delay':
+                `${Math.max(0, delaySeconds)}s`,
+              'Upstash-Deduplication-Id':
+                `credential-email-${job._id}`,
+            },
+            body:
+              JSON.stringify({
+                jobId:
+                  String(
+                    job._id
+                  ),
+              }),
+          }
+        );
+
+      let payload =
+        null;
+
+      try {
+        payload =
+          await response.json();
+      } catch {
+        payload =
+          null;
+      }
+
+      if (
+        !response.ok
+      ) {
+        throw new Error(
+          payload?.error ||
+          payload?.message ||
+          `HTTP ${response.status}`
+        );
+      }
+
+      return payload;
+    } catch (error) {
+      failures.push(
+        `${baseUrl}: ${
+          error instanceof Error
+            ? error.message
+            : String(
+                error
+              )
+        }`
+      );
+    }
   }
 
-  return payload;
+  throw new Error(
+    `QStash publish failed after automatic fallback. ${failures.join(' | ')}`
+  );
 }
+
 
 export async function scheduleCredentialEmailJobs(
   jobIds
