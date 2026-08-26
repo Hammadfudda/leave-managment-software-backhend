@@ -239,7 +239,7 @@ async function publishJob(
          */
         signal:
           AbortSignal.timeout(
-            3000
+            15000
           ),
 
         headers: {
@@ -394,6 +394,9 @@ export async function scheduleCredentialEmailJobs(
   let failed =
     0;
 
+  const errors =
+    [];
+
   for (
     const job of
     jobs
@@ -452,7 +455,7 @@ export async function scheduleCredentialEmailJobs(
       job.scheduledFor =
         null;
 
-      job.scheduleError =
+      const errorMessage =
         (
           error instanceof Error
             ? error.message
@@ -464,7 +467,19 @@ export async function scheduleCredentialEmailJobs(
           1000
         );
 
+      job.scheduleError =
+        errorMessage;
+
       await job.save();
+
+      errors.push({
+        jobId:
+          String(
+            job._id
+          ),
+        message:
+          errorMessage,
+      });
 
       failed +=
         1;
@@ -479,6 +494,7 @@ export async function scheduleCredentialEmailJobs(
   return {
     scheduled,
     failed,
+    errors,
   };
 }
 
