@@ -5,6 +5,10 @@ import {
 import * as employees from '../controllers/employee.controller.js';
 
 import {
+  exportEmployeesCsv,
+} from '../controllers/employeeExport.controller.js';
+
+import {
   createEmployeeWithTemporaryPassword,
 } from '../controllers/accountCreation.controller.js';
 
@@ -55,7 +59,7 @@ router.get(
 router.get(
   '/export.csv',
   authorize('admin'),
-  employees.exportEmployeesCsv
+  exportEmployeesCsv
 );
 
 /*
