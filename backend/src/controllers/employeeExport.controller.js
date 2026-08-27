@@ -43,11 +43,9 @@ function normalizeLeaveType(value) {
 }
 
 /*
- * Employee CSV export
- *
- * Leave types are loaded from LeavePolicy instead of a hard-coded constant.
- * LeavePolicy.distinct() is tenant-safe in the current model, so one client
- * cannot export another client's leave types.
+ * Employee CSV export.
+ * Current leave usage columns are preserved.
+ * roleLabel is HR Role; role is Portal Access.
  */
 export const exportEmployeesCsv =
   asyncHandler(
@@ -111,7 +109,11 @@ export const exportEmployeesCsv =
                   user.nationalId ||
                   '',
 
-                role:
+                roleLabel:
+                  user.roleLabel ||
+                  '',
+
+                portalAccess:
                   user.role ||
                   '',
 
@@ -229,7 +231,8 @@ export const exportEmployeesCsv =
         'email',
         'employeeId',
         'cnic',
-        'role',
+        'roleLabel',
+        'portalAccess',
         'designation',
         'department',
         'grade',

@@ -55,6 +55,10 @@ const userSchema = new Schema(
       index: true,
     },
 
+    /*
+     * ACCESS-CONTROL ROLE.
+     * This remains fixed and must never be confused with roleLabel below.
+     */
     role: {
       type: String,
       enum: [
@@ -63,6 +67,21 @@ const userSchema = new Schema(
         'employee',
       ],
       required: true,
+    },
+
+    /*
+     * HR / MASTER DATA ROLE.
+     *
+     * Examples:
+     * Software Engineer, Team Lead, Accountant, HR Officer.
+     *
+     * This has no effect on authentication or authorization.
+     * Existing users safely default to an empty value.
+     */
+    roleLabel: {
+      type: String,
+      trim: true,
+      default: '',
     },
 
     organizationId: {
@@ -217,6 +236,11 @@ userSchema.index({
   organizationId: 1,
   role: 1,
   status: 1,
+});
+
+userSchema.index({
+  organizationId: 1,
+  roleLabel: 1,
 });
 
 export default mongoose.model(

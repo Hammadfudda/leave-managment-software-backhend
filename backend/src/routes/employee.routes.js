@@ -13,6 +13,10 @@ import {
 } from '../controllers/accountCreation.controller.js';
 
 import {
+  updateEmployeeRoleLabel,
+} from '../controllers/employeeRoleLabel.controller.js';
+
+import {
   completePendingEmployeeWithTemporaryPassword,
   importEmployeesCsvWithTemporaryPasswords,
 } from '../controllers/csvImportTemporaryPassword.controller.js';
@@ -112,6 +116,16 @@ router.post(
   authorize('admin'),
   validateEmployeeManager,
   createEmployeeWithTemporaryPassword
+);
+
+/*
+ * HR Role update is separate from access-control role.
+ * Keep this specific route before the generic /:id update route.
+ */
+router.patch(
+  '/:id/role-label',
+  authorize('admin'),
+  updateEmployeeRoleLabel
 );
 
 router.get(

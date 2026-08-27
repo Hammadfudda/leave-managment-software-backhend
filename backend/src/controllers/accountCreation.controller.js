@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 
 import User from '../models/User.js';
 import Grade from '../models/Grade.js';
+import RoleLabel from '../models/RoleLabel.js';
 import LeaveBalance from '../models/LeaveBalance.js';
 
 import {
@@ -35,8 +36,8 @@ import {
 | CREATE EMPLOYEE / MANAGER WITH TEMPORARY PASSWORD
 |--------------------------------------------------------------------------
 |
-| This replaces only the POST /employees create handler.
-| Existing giant employee.controller.js stays untouched.
+| Portal access remains employee / manager.
+| roleLabel is the separate HR role selected from Master Data.
 |
 */
 export const createEmployeeWithTemporaryPassword =
@@ -52,6 +53,7 @@ export const createEmployeeWithTemporaryPassword =
         'email',
         'cnic',
         'role',
+        'roleLabel',
         'gradeId',
         'employeeId',
         'designation',
@@ -111,14 +113,32 @@ export const createEmployeeWithTemporaryPassword =
         );
       }
 
-      const grade =
-        await Grade.findById(
-          body.gradeId
-        );
+      const [
+        grade,
+        selectedRoleLabel,
+      ] =
+        await Promise.all([
+          Grade.findById(
+            body.gradeId
+          ),
+
+          RoleLabel.findOne({
+            name:
+              String(
+                body.roleLabel
+              ).trim(),
+          }),
+        ]);
 
       if (!grade) {
         throw new ValidationError(
           'Unknown grade.'
+        );
+      }
+
+      if (!selectedRoleLabel) {
+        throw new ValidationError(
+          'Unknown Role. Select a Role from Master Data or create it first.'
         );
       }
 
@@ -152,6 +172,9 @@ export const createEmployeeWithTemporaryPassword =
 
           role:
             body.role,
+
+          roleLabel:
+            selectedRoleLabel.name,
 
           gradeId:
             grade._id,
@@ -194,6 +217,10 @@ export const createEmployeeWithTemporaryPassword =
         grade
       );
 
+      /*
+       * Email account label intentionally remains Manager/Employee because
+       * it describes portal access, not the HR roleLabel.
+       */
       const emailSent =
         await sendTemporaryAccountEmail({
           to:
@@ -249,7 +276,7 @@ export const createEmployeeWithTemporaryPassword =
           user.department,
 
         details:
-          `Created ${user.role} ${user.fullName} (${user.employeeId}) with mandatory temporary-password change.`,
+          `Created ${user.role} ${user.fullName} (${user.employeeId}) with HR Role "${user.roleLabel}" and mandatory temporary-password change.`,
       });
 
       return res
