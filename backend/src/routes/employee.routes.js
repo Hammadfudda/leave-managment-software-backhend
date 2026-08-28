@@ -28,6 +28,11 @@ import {
 } from '../controllers/smartCsvImport.controller.js';
 
 import {
+  previewSmartCsvMetadata,
+  commitSmartCsvMetadata,
+} from '../controllers/smartCsvMetadata.controller.js';
+
+import {
   authenticate,
   authorize,
   loadUser,
@@ -98,6 +103,28 @@ router.post(
     'file'
   ),
   commitSmartCsv
+);
+
+/*
+ * Small companion endpoints for HR Role metadata and initial used leave.
+ * They deliberately reuse the mature Smart CSV import instead of replacing it.
+ */
+router.post(
+  '/import-smart/metadata-preview',
+  authorize('admin'),
+  uploadCsv.single(
+    'file'
+  ),
+  previewSmartCsvMetadata
+);
+
+router.post(
+  '/import-smart/metadata-commit',
+  authorize('admin'),
+  uploadCsv.single(
+    'file'
+  ),
+  commitSmartCsvMetadata
 );
 
 router.post(
