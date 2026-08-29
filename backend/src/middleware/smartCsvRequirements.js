@@ -253,6 +253,83 @@ export const validateSmartCsvRequirements =
               )
             );
 
+
+          /*
+           * Long-form CSV is also supported by the mature Smart CSV parser:
+           * leaveType + quota. Apply the same Grade + Leave Type conflict rule
+           * here so no format can silently choose "first" or "last".
+           */
+          const explicitLeaveType =
+            normalizeLeaveType(
+              getField(
+                row,
+                'leaveType'
+              )
+            );
+
+          const explicitQuotaRaw =
+            clean(
+              getField(
+                row,
+                'quota'
+              )
+            );
+
+          if (
+            grade &&
+            explicitLeaveType &&
+            explicitQuotaRaw
+          ) {
+            const explicitQuota =
+              Number(
+                explicitQuotaRaw
+              );
+
+            if (
+              !Number.isFinite(
+                explicitQuota
+              ) ||
+              explicitQuota <
+                0
+            ) {
+              errors.push(
+                `Row ${rowNumber}: quota must be a valid number greater than or equal to 0.`
+              );
+            } else {
+              const explicitKey =
+                `${normalize(grade)}::${explicitLeaveType}`;
+
+              const previousExplicit =
+                quotaByGradeType.get(
+                  explicitKey
+                );
+
+              if (
+                previousExplicit &&
+                previousExplicit.quota !==
+                  explicitQuota
+              ) {
+                errors.push(
+                  `Conflicting ${explicitLeaveType.replace(
+                    /_/g,
+                    ' '
+                  )} quota for Grade ${grade}: ${previousExplicit.quota} and ${explicitQuota}. A Grade can have only one yearly quota for the same leave type.`
+                );
+              } else if (
+                !previousExplicit
+              ) {
+                quotaByGradeType.set(
+                  explicitKey,
+                  {
+                    quota:
+                      explicitQuota,
+                    rowNumber,
+                  }
+                );
+              }
+            }
+          }
+
           for (
             const column
             of quotaColumns(
