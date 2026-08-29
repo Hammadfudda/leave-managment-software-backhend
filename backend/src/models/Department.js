@@ -6,18 +6,39 @@ import {
 
 const { Schema } = mongoose;
 
-// Spec Part 2.3
 const departmentSchema = new Schema(
   {
-    name: { type: String, required: true },
-    // false = this department works a 6-day week (Saturday is a normal working day).
-    // Default true = standard 5-day week (Saturday off, same as Sunday).
-    saturdayOff: { type: Boolean, default: true },
+    name: {
+      type: String,
+      required: true,
+    },
+
+    /*
+     * User-visible organizational parent.
+     * Stored by name so the existing RoleLabel/Division master-data records
+     * remain backward compatible without a risky migration.
+     */
+    divisionName: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true,
+    },
+
+    // false = this department works a 6-day week.
+    saturdayOff: {
+      type: Boolean,
+      default: true,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-departmentSchema.plugin(tenantPlugin);
+departmentSchema.plugin(
+  tenantPlugin
+);
 
 departmentSchema.index(
   {
@@ -29,4 +50,12 @@ departmentSchema.index(
   }
 );
 
-export default mongoose.model('Department', departmentSchema);
+departmentSchema.index({
+  organizationId: 1,
+  divisionName: 1,
+});
+
+export default mongoose.model(
+  'Department',
+  departmentSchema
+);

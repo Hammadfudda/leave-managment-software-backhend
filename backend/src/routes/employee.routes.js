@@ -46,6 +46,10 @@ import {
   validateEmployeeManager,
 } from '../middleware/validateEmployeeManager.js';
 
+import {
+  validateSmartCsvRequirements,
+} from '../middleware/smartCsvRequirements.js';
+
 const router =
   Router();
 
@@ -61,22 +65,28 @@ router.get(
 
 router.get(
   '/removed',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   employees.listRemovedEmployees
 );
 
 router.get(
   '/export.csv',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   exportEmployeesCsv
 );
 
 /*
- * Existing import route is preserved for backward compatibility.
+ * Legacy CSV import remains unchanged.
  */
 router.post(
   '/import',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   uploadCsv.single(
     'file'
   ),
@@ -84,52 +94,66 @@ router.post(
 );
 
 /*
- * New Smart CSV flow.
- * Preview first, then commit with explicit Admin decisions.
+ * Smart CSV remains preview-first and keeps the mature Manager / permissions
+ * controller. The new middleware only adds confirmed blocking validation for
+ * Division, Leave Year Start and Grade + Leave Type quota conflicts.
  */
 router.post(
   '/import-smart/preview',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   uploadCsv.single(
     'file'
   ),
+  validateSmartCsvRequirements,
   previewSmartCsv
 );
 
 router.post(
   '/import-smart/commit',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   uploadCsv.single(
     'file'
   ),
+  validateSmartCsvRequirements,
   commitSmartCsv
 );
 
 /*
- * Small companion endpoints for HR Role metadata and initial used leave.
- * They deliberately reuse the mature Smart CSV import instead of replacing it.
+ * Companion metadata endpoints now mean Division + initial Used values.
  */
 router.post(
   '/import-smart/metadata-preview',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   uploadCsv.single(
     'file'
   ),
+  validateSmartCsvRequirements,
   previewSmartCsvMetadata
 );
 
 router.post(
   '/import-smart/metadata-commit',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   uploadCsv.single(
     'file'
   ),
+  validateSmartCsvRequirements,
   commitSmartCsvMetadata
 );
 
 router.post(
   '/import-smart/retry-emails',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   retrySmartCsvCredentialEmails
 );
 
@@ -140,18 +164,21 @@ router.get(
 
 router.post(
   '/',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   validateEmployeeManager,
   createEmployeeWithTemporaryPassword
 );
 
 /*
- * HR Role update is separate from access-control role.
- * Keep this specific route before the generic /:id update route.
+ * Existing route path retained; user-visible meaning is Division.
  */
 router.patch(
   '/:id/role-label',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   updateEmployeeRoleLabel
 );
 
@@ -162,26 +189,34 @@ router.get(
 
 router.patch(
   '/:id',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   validateEmployeeManager,
   employees.updateEmployee
 );
 
 router.patch(
   '/:id/complete-pending',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   completePendingEmployeeWithTemporaryPassword
 );
 
 router.patch(
   '/:id/remove',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   employees.removeEmployee
 );
 
 router.patch(
   '/:id/restore',
-  authorize('admin'),
+  authorize(
+    'admin'
+  ),
   employees.restoreEmployee
 );
 

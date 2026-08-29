@@ -11,22 +11,42 @@ import {
   getGradeQuotaForUser,
 } from './eligibility.service.js';
 
+import {
+  calculateProratedQuota,
+  getOrganizationLeaveYearConfig,
+  resolveLeaveYearForUser,
+} from './leaveYear.service.js';
+
+import {
+  upsertYearlySnapshotForBalance,
+} from './yearlySnapshot.service.js';
+
+/*
+ * Compatibility export for older callers that explicitly need calendar year.
+ * Normal balance operations resolve the organization's configured leave year.
+ */
 export function getCurrentLeaveYear(
   date = new Date()
 ) {
   return date.getFullYear();
 }
 
-/*
- * Compatibility export. With the final model there is one policy per leaveType,
- * so specificity is no longer needed.
- */
 export function policySpecificity() {
   return 1;
 }
 
+function withSession(
+  query,
+  session
+) {
+  return session
+    ? query.session(session)
+    : query;
+}
+
 export async function getPoliciesForUser(
-  user
+  user,
+  options = {}
 ) {
   const bestByType =
     new Map();
@@ -39,8 +59,17 @@ export async function getPoliciesForUser(
     return bestByType;
   }
 
+  let query =
+    LeavePolicy.find({});
+
+  query =
+    withSession(
+      query,
+      options.session
+    );
+
   const policies =
-    await LeavePolicy.find({});
+    await query;
 
   for (
     const policy
@@ -73,12 +102,22 @@ export async function getPoliciesForUser(
 
 export async function resolvePolicyForBalance(
   employeeId,
-  leaveType
+  leaveType,
+  options = {}
 ) {
-  const user =
-    await User.findById(
+  let userQuery =
+    User.findById(
       employeeId
     );
+
+  userQuery =
+    withSession(
+      userQuery,
+      options.session
+    );
+
+  const user =
+    await userQuery;
 
   if (!user) {
     throw new ValidationError(
@@ -97,7 +136,8 @@ export async function resolvePolicyForBalance(
 
   const policies =
     await getPoliciesForUser(
-      user
+      user,
+      options
     );
 
   const policy =
@@ -121,28 +161,82 @@ export async function resolvePolicyForBalance(
   };
 }
 
-function quotaFor(
-  policy,
-  user
+async function resolveYear(
+  user,
+  year,
+  referenceDate,
+  options
 ) {
-  return Number(
-    getGradeQuotaForUser(
-      policy,
-      user
-    ) ||
-    0
+  if (
+    year !==
+      undefined &&
+    year !==
+      null &&
+    year !==
+      ''
+  ) {
+    return Number(
+      year
+    );
+  }
+
+  return resolveLeaveYearForUser(
+    user,
+    referenceDate ||
+      new Date(),
+    options
   );
+}
+
+async function proratedQuota(
+  policy,
+  user,
+  year,
+  options
+) {
+  const yearlyQuota =
+    Number(
+      getGradeQuotaForUser(
+        policy,
+        user
+      ) ||
+      0
+    );
+
+  const config =
+    await getOrganizationLeaveYearConfig(
+      user.organizationId,
+      options
+    );
+
+  return calculateProratedQuota({
+    yearlyQuota,
+    dateOfJoining:
+      user.dateOfJoining,
+    leaveYear:
+      year,
+    config,
+  });
 }
 
 export async function syncPolicyBalancesForUser(
   employeeId,
-  year =
-    getCurrentLeaveYear()
+  year = null,
+  options = {}
 ) {
-  const user =
-    await User.findById(
+  let userQuery =
+    User.findById(
       employeeId
     );
+
+  userQuery =
+    withSession(
+      userQuery,
+      options.session
+    );
+
+  const user =
+    await userQuery;
 
   if (!user) {
     return [];
@@ -155,12 +249,29 @@ export async function syncPolicyBalancesForUser(
     return [];
   }
 
-  const policies =
-    await getPoliciesForUser(
-      user
+  const selectedYear =
+    await resolveYear(
+      user,
+      year,
+      options.referenceDate,
+      options
     );
 
-  const balances = [];
+  const currentYear =
+    await resolveLeaveYearForUser(
+      user,
+      new Date(),
+      options
+    );
+
+  const policies =
+    await getPoliciesForUser(
+      user,
+      options
+    );
+
+  const balances =
+    [];
 
   for (
     const [
@@ -170,9 +281,11 @@ export async function syncPolicyBalancesForUser(
     of policies.entries()
   ) {
     const quota =
-      quotaFor(
+      await proratedQuota(
         policy,
-        user
+        user,
+        selectedYear,
+        options
       );
 
     if (
@@ -181,72 +294,147 @@ export async function syncPolicyBalancesForUser(
       continue;
     }
 
-    const balance =
-      await LeaveBalance
-        .findOneAndUpdate(
-          {
-            employeeId,
-            leaveType,
-            year,
-          },
-          {
-            $set: {
+    let balanceQuery =
+      LeaveBalance.findOne({
+        employeeId,
+        leaveType,
+        year:
+          selectedYear,
+      });
+
+    balanceQuery =
+      withSession(
+        balanceQuery,
+        options.session
+      );
+
+    let balance =
+      await balanceQuery;
+
+    if (!balance) {
+      const created =
+        await LeaveBalance.create(
+          [
+            {
+              employeeId,
+              leaveType,
+              year:
+                selectedYear,
               quota,
-            },
-            $setOnInsert: {
               used: 0,
             },
-          },
-          {
-            upsert: true,
-            new: true,
-            setDefaultsOnInsert:
-              true,
-          }
+          ],
+          options.session
+            ? {
+                session:
+                  options.session,
+              }
+            : {}
         );
+
+      balance =
+        created[0];
+    } else if (
+      Number(
+        selectedYear
+      ) >=
+      Number(
+        currentYear
+      )
+    ) {
+      /*
+       * Current/future year quota follows the current Grade + Policy.
+       * Past-year granted quota remains historical.
+       */
+      balance.quota =
+        quota;
+
+      await balance.save(
+        options.session
+          ? {
+              session:
+                options.session,
+            }
+          : {}
+      );
+    }
 
     balances.push(
       balance
     );
+
+    await upsertYearlySnapshotForBalance(
+      balance,
+      user,
+      options
+    );
   }
 
-  const activeLeaveTypes =
-    [
-      ...policies.keys(),
-    ];
+  if (
+    Number(
+      selectedYear
+    ) >=
+    Number(
+      currentYear
+    )
+  ) {
+    const activeLeaveTypes =
+      [
+        ...policies.keys(),
+      ];
 
-  await LeaveBalance.updateMany(
-    {
-      employeeId,
-      year,
-      leaveType: {
-        $nin:
-          activeLeaveTypes,
+    await LeaveBalance.updateMany(
+      {
+        employeeId,
+        year:
+          selectedYear,
+        leaveType: {
+          $nin:
+            activeLeaveTypes,
+        },
       },
-    },
-    {
-      $set: {
-        quota: 0,
+      {
+        $set: {
+          quota: 0,
+        },
       },
-    }
-  );
+      options.session
+        ? {
+            session:
+              options.session,
+          }
+        : {}
+    );
+  }
 
   return balances;
 }
 
 export async function syncCurrentYearBalancesForAllEmployees(
-  year =
-    getCurrentLeaveYear()
+  year = null,
+  options = {}
 ) {
-  const users =
-    await User.find({
-      status: 'active',
+  let usersQuery =
+    User.find({
+      status:
+        'active',
       detailsStatus: {
         $ne:
           'pending',
       },
     })
-      .select('_id');
+      .select(
+        '_id'
+      );
+
+  usersQuery =
+    withSession(
+      usersQuery,
+      options.session
+    );
+
+  const users =
+    await usersQuery;
 
   for (
     const user
@@ -254,51 +442,48 @@ export async function syncCurrentYearBalancesForAllEmployees(
   ) {
     await syncPolicyBalancesForUser(
       user._id,
-      year
+      year,
+      options
     );
   }
 }
 
-/*
- * Existing employee controller calls this signature.
- * Grade object is intentionally ignored because LeavePolicy is source of truth.
- */
 export async function initializeLeaveBalances(
   employeeId,
   _grade,
-  year =
-    getCurrentLeaveYear()
+  year = null,
+  options = {}
 ) {
   return syncPolicyBalancesForUser(
     employeeId,
-    year
+    year,
+    options
   );
 }
 
-/*
- * Existing employee/taxonomy code may still import this.
- */
 export async function syncQuotasToGrade(
   employeeId,
   _grade,
-  year =
-    getCurrentLeaveYear()
+  year = null,
+  options = {}
 ) {
   return syncPolicyBalancesForUser(
     employeeId,
-    year
+    year,
+    options
   );
 }
 
 export async function getLeaveBalancesForUser(
   employeeId,
-  year =
-    getCurrentLeaveYear()
+  year = null,
+  options = {}
 ) {
   const balances =
     await syncPolicyBalancesForUser(
       employeeId,
-      year
+      year,
+      options
     );
 
   const out = {};
@@ -311,6 +496,8 @@ export async function getLeaveBalancesForUser(
       row.leaveType
     ] = {
       quota:
+        row.quota,
+      granted:
         row.quota,
       used:
         row.used,
@@ -331,7 +518,8 @@ export async function getLeaveBalancesForUser(
 async function ensureBalance(
   employeeId,
   leaveType,
-  year
+  year = null,
+  options = {}
 ) {
   const {
     user,
@@ -339,13 +527,24 @@ async function ensureBalance(
   } =
     await resolvePolicyForBalance(
       employeeId,
-      leaveType
+      leaveType,
+      options
+    );
+
+  const selectedYear =
+    await resolveYear(
+      user,
+      year,
+      options.referenceDate,
+      options
     );
 
   const quota =
-    quotaFor(
+    await proratedQuota(
       policy,
-      user
+      user,
+      selectedYear,
+      options
     );
 
   if (
@@ -356,41 +555,70 @@ async function ensureBalance(
     );
   }
 
-  return LeaveBalance
-    .findOneAndUpdate(
-      {
-        employeeId,
-        leaveType:
-          String(
-            leaveType
-          )
-            .trim()
-            .toLowerCase(),
-        year,
-      },
-      {
-        $set: {
-          quota,
-        },
-        $setOnInsert: {
-          used: 0,
-        },
-      },
-      {
-        upsert: true,
-        new: true,
-        setDefaultsOnInsert:
-          true,
-      }
+  let balanceQuery =
+    LeaveBalance.findOne({
+      employeeId,
+      leaveType:
+        String(
+          leaveType
+        )
+          .trim()
+          .toLowerCase(),
+      year:
+        selectedYear,
+    });
+
+  balanceQuery =
+    withSession(
+      balanceQuery,
+      options.session
     );
+
+  let balance =
+    await balanceQuery;
+
+  if (!balance) {
+    const created =
+      await LeaveBalance.create(
+        [
+          {
+            employeeId,
+            leaveType:
+              String(
+                leaveType
+              )
+                .trim()
+                .toLowerCase(),
+            year:
+              selectedYear,
+            quota,
+            used: 0,
+          },
+        ],
+        options.session
+          ? {
+              session:
+                options.session,
+            }
+          : {}
+      );
+
+    balance =
+      created[0];
+  }
+
+  return {
+    balance,
+    user,
+  };
 }
 
 export async function deductLeaveBalance(
   employeeId,
   leaveType,
   days,
-  year =
-    getCurrentLeaveYear()
+  year = null,
+  options = {}
 ) {
   const amount =
     Number(days);
@@ -402,11 +630,15 @@ export async function deductLeaveBalance(
     return null;
   }
 
-  const balance =
+  const {
+    balance,
+    user,
+  } =
     await ensureBalance(
       employeeId,
       leaveType,
-      year
+      year,
+      options
     );
 
   const remaining =
@@ -428,7 +660,20 @@ export async function deductLeaveBalance(
   balance.used +=
     amount;
 
-  await balance.save();
+  await balance.save(
+    options.session
+      ? {
+          session:
+            options.session,
+        }
+      : {}
+  );
+
+  await upsertYearlySnapshotForBalance(
+    balance,
+    user,
+    options
+  );
 
   return balance;
 }
@@ -437,8 +682,8 @@ export async function restoreLeaveBalance(
   employeeId,
   leaveType,
   days,
-  year =
-    getCurrentLeaveYear()
+  year = null,
+  options = {}
 ) {
   const amount =
     Number(days);
@@ -450,11 +695,15 @@ export async function restoreLeaveBalance(
     return null;
   }
 
-  const balance =
+  const {
+    balance,
+    user,
+  } =
     await ensureBalance(
       employeeId,
       leaveType,
-      year
+      year,
+      options
     );
 
   balance.used =
@@ -464,7 +713,20 @@ export async function restoreLeaveBalance(
         amount
     );
 
-  await balance.save();
+  await balance.save(
+    options.session
+      ? {
+          session:
+            options.session,
+        }
+      : {}
+  );
+
+  await upsertYearlySnapshotForBalance(
+    balance,
+    user,
+    options
+  );
 
   return balance;
 }

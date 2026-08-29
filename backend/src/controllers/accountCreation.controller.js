@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import User from '../models/User.js';
 import Grade from '../models/Grade.js';
 import RoleLabel from '../models/RoleLabel.js';
+import Department from '../models/Department.js';
 import LeaveBalance from '../models/LeaveBalance.js';
 
 import {
@@ -27,33 +28,42 @@ import {
 } from '../services/balance.service.js';
 
 import {
+  formatLeaveYearStart,
+  getOrganizationLeaveYearConfig,
+  parseLeaveYearStart,
+} from '../services/leaveYear.service.js';
+
+import {
   generateTemporaryPassword,
   sendTemporaryAccountEmail,
 } from '../services/temporaryPassword.service.js';
 
 /*
-|--------------------------------------------------------------------------
-| CREATE EMPLOYEE / MANAGER WITH TEMPORARY PASSWORD
-|--------------------------------------------------------------------------
-|
-| Portal access remains employee / manager.
-| roleLabel is the separate HR role selected from Master Data.
-|
-*/
+ * Portal Access remains employee / manager.
+ * roleLabel is retained as the database compatibility field, but its
+ * user-visible meaning is Division.
+ */
 export const createEmployeeWithTemporaryPassword =
   asyncHandler(
     async (
       req,
       res
     ) => {
-      const body = req.body;
+      const body =
+        req.body;
+
+      const divisionName =
+        String(
+          body.division ||
+          body.roleLabel ||
+          ''
+        ).trim();
 
       const required = [
         'fullName',
         'email',
         'cnic',
         'role',
-        'roleLabel',
         'gradeId',
         'employeeId',
         'designation',
@@ -61,18 +71,28 @@ export const createEmployeeWithTemporaryPassword =
         'dateOfJoining',
       ];
 
-      const missing = required.filter(
-        (field) => !body[field]
-      );
+      const missing =
+        required.filter(
+          (field) =>
+            !body[field]
+        );
+
+      if (!divisionName) {
+        missing.push(
+          'division'
+        );
+      }
 
       if (missing.length) {
         throw new ValidationError(
           'Missing required fields.',
           Object.fromEntries(
-            missing.map((field) => [
-              field,
-              'Required',
-            ])
+            missing.map(
+              (field) => [
+                field,
+                'Required',
+              ]
+            )
           )
         );
       }
@@ -81,21 +101,26 @@ export const createEmployeeWithTemporaryPassword =
         ![
           'employee',
           'manager',
-        ].includes(body.role)
+        ].includes(
+          body.role
+        )
       ) {
         throw new ValidationError(
           'Only Employee or Manager accounts can be created here.'
         );
       }
 
-      const email = String(
-        body.email
-      ).toLowerCase();
+      const email =
+        String(
+          body.email
+        ).toLowerCase();
 
       const duplicate =
         await User.findOne({
           $or: [
-            { email },
+            {
+              email,
+            },
             {
               nationalId:
                 body.cnic,
@@ -115,7 +140,9 @@ export const createEmployeeWithTemporaryPassword =
 
       const [
         grade,
-        selectedRoleLabel,
+        selectedDivision,
+        selectedDepartment,
+        leaveYearConfig,
       ] =
         await Promise.all([
           Grade.findById(
@@ -124,10 +151,19 @@ export const createEmployeeWithTemporaryPassword =
 
           RoleLabel.findOne({
             name:
+              divisionName,
+          }),
+
+          Department.findOne({
+            name:
               String(
-                body.roleLabel
+                body.department
               ).trim(),
           }),
+
+          getOrganizationLeaveYearConfig(
+            req.currentUser.organizationId
+          ),
         ]);
 
       if (!grade) {
@@ -136,10 +172,65 @@ export const createEmployeeWithTemporaryPassword =
         );
       }
 
-      if (!selectedRoleLabel) {
+      if (!selectedDivision) {
         throw new ValidationError(
-          'Unknown Role. Select a Role from Master Data or create it first.'
+          'Unknown Division. Select a Division from Master Data or create it first.'
         );
+      }
+
+      if (!selectedDepartment) {
+        throw new ValidationError(
+          'Unknown Department. Select a Department from Master Data or create it first.'
+        );
+      }
+
+      if (
+        selectedDepartment.divisionName &&
+        selectedDepartment.divisionName !==
+          selectedDivision.name
+      ) {
+        throw new ValidationError(
+          `Department "${selectedDepartment.name}" belongs to Division "${selectedDepartment.divisionName}", not "${selectedDivision.name}".`
+        );
+      }
+
+      /*
+       * Legacy departments can be linked safely on first valid employee create.
+       */
+      if (
+        !selectedDepartment.divisionName
+      ) {
+        selectedDepartment.divisionName =
+          selectedDivision.name;
+
+        await selectedDepartment.save();
+      }
+
+      /*
+       * Organization setting is authoritative. If the frontend sends the
+       * visible value, it must match exactly.
+       */
+      if (
+        body.leaveYearStart
+      ) {
+        const supplied =
+          parseLeaveYearStart(
+            body.leaveYearStart
+          );
+
+        if (
+          !supplied ||
+          supplied.day !==
+            leaveYearConfig.day ||
+          supplied.month !==
+            leaveYearConfig.month
+        ) {
+          throw new ValidationError(
+            `Leave Year Start must match the organization setting (${formatLeaveYearStart(
+              leaveYearConfig
+            )}).`
+          );
+        }
       }
 
       const temporaryPassword =
@@ -174,7 +265,7 @@ export const createEmployeeWithTemporaryPassword =
             body.role,
 
           roleLabel:
-            selectedRoleLabel.name,
+            selectedDivision.name,
 
           gradeId:
             grade._id,
@@ -198,7 +289,7 @@ export const createEmployeeWithTemporaryPassword =
             body.designation,
 
           department:
-            body.department,
+            selectedDepartment.name,
 
           phone:
             body.phone,
@@ -217,10 +308,6 @@ export const createEmployeeWithTemporaryPassword =
         grade
       );
 
-      /*
-       * Email account label intentionally remains Manager/Employee because
-       * it describes portal access, not the HR roleLabel.
-       */
       const emailSent =
         await sendTemporaryAccountEmail({
           to:
@@ -276,7 +363,7 @@ export const createEmployeeWithTemporaryPassword =
           user.department,
 
         details:
-          `Created ${user.role} ${user.fullName} (${user.employeeId}) with HR Role "${user.roleLabel}" and mandatory temporary-password change.`,
+          `Created ${user.role} ${user.fullName} (${user.employeeId}) in Division "${user.roleLabel}" with mandatory temporary-password change.`,
       });
 
       return res
@@ -284,7 +371,9 @@ export const createEmployeeWithTemporaryPassword =
         .json({
           success: true,
           data:
-            sanitizeUser(user),
+            sanitizeUser(
+              user
+            ),
           emailSent,
         });
     }

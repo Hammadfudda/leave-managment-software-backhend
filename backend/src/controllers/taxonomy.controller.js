@@ -32,8 +32,8 @@ function crudFactory({
     const out = {};
 
     for (
-      const field of
-      writableFields
+      const field
+      of writableFields
     ) {
       if (
         body[field] !==
@@ -86,12 +86,10 @@ function crudFactory({
           }
 
           const existing =
-            await Model.findOne(
-              {
-                name:
-                  payload.name,
-              }
-            );
+            await Model.findOne({
+              name:
+                payload.name,
+            });
 
           if (existing) {
             throw new ConflictError(
@@ -106,22 +104,15 @@ function crudFactory({
 
           await audit({
             actorId:
-              req.currentUser
-                ._id,
-
+              req.currentUser._id,
             actorName:
-              req.currentUser
-                .fullName,
-
+              req.currentUser.fullName,
             action:
               actions.create,
-
             targetType:
               Model.modelName,
-
             targetId:
               item._id,
-
             details:
               `Created ${label.toLowerCase()} "${item.name}"`,
           });
@@ -161,17 +152,14 @@ function crudFactory({
               item.name
           ) {
             const clash =
-              await Model.findOne(
-                {
-                  name:
-                    payload.name,
-
-                  _id: {
-                    $ne:
-                      item._id,
-                  },
-                }
-              );
+              await Model.findOne({
+                name:
+                  payload.name,
+                _id: {
+                  $ne:
+                    item._id,
+                },
+              });
 
             if (clash) {
               throw new ConflictError(
@@ -199,22 +187,15 @@ function crudFactory({
 
           await audit({
             actorId:
-              req.currentUser
-                ._id,
-
+              req.currentUser._id,
             actorName:
-              req.currentUser
-                .fullName,
-
+              req.currentUser.fullName,
             action:
               actions.update,
-
             targetType:
               Model.modelName,
-
             targetId:
               item._id,
-
             details:
               `Updated ${label.toLowerCase()} "${previousName}"`,
           });
@@ -248,7 +229,7 @@ function crudFactory({
 
           if (inUse > 0) {
             throw new ConflictError(
-              `This ${label.toLowerCase()} is assigned to ${inUse} employee(s) and cannot be deleted.`
+              `This ${label.toLowerCase()} is assigned to ${inUse} record(s) and cannot be deleted.`
             );
           }
 
@@ -256,22 +237,15 @@ function crudFactory({
 
           await audit({
             actorId:
-              req.currentUser
-                ._id,
-
+              req.currentUser._id,
             actorName:
-              req.currentUser
-                .fullName,
-
+              req.currentUser.fullName,
             action:
               actions.delete,
-
             targetType:
               Model.modelName,
-
             targetId:
               item._id,
-
             details:
               `Deleted ${label.toLowerCase()} "${item.name}"`,
           });
@@ -294,16 +268,14 @@ export const grades =
     actions: {
       create:
         'CREATE_GRADE',
-
       update:
         'EDIT_GRADE',
-
       delete:
         'DELETE_GRADE',
     },
 
     /*
-     * Annual/Sick/Casual quota fields REMOVED.
+     * Leave quota remains Leave Policy source-of-truth.
      */
     writableFields: [
       'name',
@@ -317,7 +289,6 @@ export const grades =
         User.countDocuments({
           gradeId:
             grade._id,
-
           status: {
             $ne:
               'inactive',
@@ -329,17 +300,14 @@ export const departments =
   crudFactory({
     Model:
       Department,
-
     label:
       'Department',
 
     actions: {
       create:
         'CREATE_DEPARTMENT',
-
       update:
         'EDIT_DEPARTMENT',
-
       delete:
         'DELETE_DEPARTMENT',
     },
@@ -347,6 +315,7 @@ export const departments =
     writableFields: [
       'name',
       'saturdayOff',
+      'divisionName',
     ],
 
     inUseCheck:
@@ -354,7 +323,6 @@ export const departments =
         User.countDocuments({
           department:
             dept.name,
-
           status: {
             $ne:
               'inactive',
@@ -375,7 +343,6 @@ export const departments =
               department:
                 previousName,
             },
-
             {
               $set: {
                 department:
@@ -391,17 +358,14 @@ export const designations =
   crudFactory({
     Model:
       Designation,
-
     label:
       'Designation',
 
     actions: {
       create:
         'CREATE_DESIGNATION',
-
       update:
         'EDIT_DESIGNATION',
-
       delete:
         'DELETE_DESIGNATION',
     },
@@ -415,7 +379,6 @@ export const designations =
         User.countDocuments({
           designation:
             designation.name,
-
           status: {
             $ne:
               'inactive',
@@ -436,7 +399,6 @@ export const designations =
               designation:
                 previousName,
             },
-
             {
               $set: {
                 designation:
@@ -448,21 +410,22 @@ export const designations =
       },
   });
 
+/*
+ * Existing /roles endpoint is kept for compatibility.
+ * User-visible meaning is now Division.
+ */
 export const roles =
   crudFactory({
     Model:
       RoleLabel,
-
     label:
-      'Role',
+      'Division',
 
     actions: {
       create:
         'CREATE_ROLE',
-
       update:
         'EDIT_ROLE',
-
       delete:
         'DELETE_ROLE',
     },
@@ -472,5 +435,70 @@ export const roles =
     ],
 
     inUseCheck:
-      async () => 0,
+      async (
+        division
+      ) => {
+        const [
+          employees,
+          departments,
+        ] =
+          await Promise.all([
+            User.countDocuments({
+              roleLabel:
+                division.name,
+              status: {
+                $ne:
+                  'inactive',
+              },
+            }),
+
+            Department.countDocuments({
+              divisionName:
+                division.name,
+            }),
+          ]);
+
+        return (
+          employees +
+          departments
+        );
+      },
+
+    afterUpdate:
+      async (
+        division,
+        previousName
+      ) => {
+        if (
+          previousName !==
+          division.name
+        ) {
+          await Promise.all([
+            User.updateMany(
+              {
+                roleLabel:
+                  previousName,
+              },
+              {
+                $set: {
+                  roleLabel:
+                    division.name,
+                },
+              }
+            ),
+            Department.updateMany(
+              {
+                divisionName:
+                  previousName,
+              },
+              {
+                $set: {
+                  divisionName:
+                    division.name,
+                },
+              }
+            ),
+          ]);
+        }
+      },
   });

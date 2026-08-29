@@ -158,6 +158,31 @@ const leaveRequestSchema = new Schema(
           type: Date,
           default: Date.now,
         },
+
+        isAdminOverride: {
+          type: Boolean,
+          default: false,
+        },
+
+        isAdminStop: {
+          type: Boolean,
+          default: false,
+        },
+
+        previousStatus: {
+          type: String,
+          default: null,
+        },
+
+        newStatus: {
+          type: String,
+          default: null,
+        },
+
+        effectiveReturnDate: {
+          type: Date,
+          default: null,
+        },
       },
     ],
 

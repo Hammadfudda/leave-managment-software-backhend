@@ -1,6 +1,13 @@
-import { Router } from 'express';
+import {
+  Router,
+} from 'express';
 
 import * as leave from '../controllers/leave.controller.js';
+
+import {
+  overrideDecision,
+  stopApprovedLeave,
+} from '../controllers/adminLeave.controller.js';
 
 import {
   listAvailablePolicies,
@@ -24,7 +31,8 @@ import {
   validateLeaveModification,
 } from '../middleware/validateLeaveModification.js';
 
-const router = Router();
+const router =
+  Router();
 
 router.use(
   authenticate,
@@ -98,6 +106,22 @@ router.patch(
     'admin'
   ),
   leave.actOnBehalfOf
+);
+
+router.patch(
+  '/:id/admin-override',
+  authorize(
+    'admin'
+  ),
+  overrideDecision
+);
+
+router.patch(
+  '/:id/admin-stop',
+  authorize(
+    'admin'
+  ),
+  stopApprovedLeave
 );
 
 router.post(

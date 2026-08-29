@@ -1,4 +1,6 @@
-import { Parser } from 'json2csv';
+import {
+  Parser,
+} from 'json2csv';
 
 import User from '../models/User.js';
 import LeavePolicy from '../models/LeavePolicy.js';
@@ -11,7 +13,14 @@ import {
   getLeaveBalancesForUser,
 } from '../services/balance.service.js';
 
-function safeDateOnly(value) {
+import {
+  formatLeaveYearStart,
+  getOrganizationLeaveYearConfig,
+} from '../services/leaveYear.service.js';
+
+function safeDateOnly(
+  value
+) {
   if (!value) {
     return '';
   }
@@ -19,7 +28,9 @@ function safeDateOnly(value) {
   const date =
     value instanceof Date
       ? value
-      : new Date(value);
+      : new Date(
+          value
+        );
 
   if (
     Number.isNaN(
@@ -31,28 +42,32 @@ function safeDateOnly(value) {
 
   return date
     .toISOString()
-    .split('T')[0];
+    .split(
+      'T'
+    )[0];
 }
 
-function normalizeLeaveType(value) {
+function normalizeLeaveType(
+  value
+) {
   return String(
-    value || ''
+    value ||
+    ''
   )
     .trim()
     .toLowerCase();
 }
 
-/*
- * Employee CSV export.
- * Current leave usage columns are preserved.
- * roleLabel is HR Role; role is Portal Access.
- */
 export const exportEmployeesCsv =
   asyncHandler(
-    async (req, res) => {
+    async (
+      req,
+      res
+    ) => {
       const [
         users,
         policyLeaveTypes,
+        leaveYearConfig,
       ] =
         await Promise.all([
           User.find({})
@@ -60,11 +75,16 @@ export const exportEmployeesCsv =
               'gradeId'
             )
             .sort({
-              fullName: 1,
+              fullName:
+                1,
             }),
 
           LeavePolicy.distinct(
             'leaveType'
+          ),
+
+          getOrganizationLeaveYearConfig(
+            req.currentUser.organizationId
           ),
         ]);
 
@@ -78,14 +98,18 @@ export const exportEmployeesCsv =
               .map(
                 normalizeLeaveType
               )
-              .filter(Boolean)
+              .filter(
+                Boolean
+              )
           )
         ).sort();
 
       const rows =
         await Promise.all(
           users.map(
-            async (user) => {
+            async (
+              user
+            ) => {
               const balances =
                 await getLeaveBalancesForUser(
                   user._id
@@ -109,7 +133,7 @@ export const exportEmployeesCsv =
                   user.nationalId ||
                   '',
 
-                roleLabel:
+                division:
                   user.roleLabel ||
                   '',
 
@@ -126,13 +150,17 @@ export const exportEmployeesCsv =
                   '',
 
                 grade:
-                  user.gradeId
-                    ?.name ||
+                  user.gradeId?.name ||
                   '',
 
                 dateOfJoining:
                   safeDateOnly(
                     user.dateOfJoining
+                  ),
+
+                leaveYearStart:
+                  formatLeaveYearStart(
+                    leaveYearConfig
                   ),
 
                 status:
@@ -148,9 +176,14 @@ export const exportEmployeesCsv =
                     : '',
               };
 
-              let totalGranted = 0;
-              let totalUsed = 0;
-              let totalRemaining = 0;
+              let totalGranted =
+                0;
+
+              let totalUsed =
+                0;
+
+              let totalRemaining =
+                0;
 
               for (
                 const type
@@ -160,9 +193,12 @@ export const exportEmployeesCsv =
                   balances[
                     type
                   ] || {
-                    quota: 0,
-                    used: 0,
-                    remaining: 0,
+                    quota:
+                      0,
+                    used:
+                      0,
+                    remaining:
+                      0,
                   };
 
                 const quota =
@@ -231,19 +267,22 @@ export const exportEmployeesCsv =
         'email',
         'employeeId',
         'cnic',
-        'roleLabel',
+        'division',
         'portalAccess',
         'designation',
         'department',
         'grade',
         'dateOfJoining',
+        'leaveYearStart',
         'status',
         'canApproveOtherDepartments',
       ];
 
       const leaveFields =
         leaveTypes.flatMap(
-          (type) => [
+          (
+            type
+          ) => [
             `${type}Granted`,
             `${type}Used`,
             `${type}Remaining`,
@@ -277,6 +316,8 @@ export const exportEmployeesCsv =
         `employees-export-${Date.now()}.csv`
       );
 
-      res.send(csv);
+      res.send(
+        csv
+      );
     }
   );

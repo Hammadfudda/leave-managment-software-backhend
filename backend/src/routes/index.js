@@ -12,6 +12,7 @@ import dashboardRoutes from './dashboard.routes.js';
 import superAdminRoutes from './superAdmin.routes.js';
 import feedbackRoutes from './feedback.routes.js';
 import qstashRoutes from './qstash.routes.js';
+import organizationSettingsRoutes from './organizationSettings.routes.js';
 
 import {
   gradeRoutes,
@@ -32,7 +33,7 @@ const router =
 router.get(
   '/health',
   (
-    req,
+    _req,
     res
   ) => {
     res.json({
@@ -45,9 +46,7 @@ router.get(
 );
 
 /*
- * Public internal webhook.
- * No user JWT is required because every request is cryptographically verified
- * against QSTASH_CURRENT_SIGNING_KEY / QSTASH_NEXT_SIGNING_KEY.
+ * Existing QStash webhook is preserved.
  */
 router.use(
   '/internal/qstash',
@@ -89,9 +88,17 @@ router.use(
   designationRoutes
 );
 
+/*
+ * Existing endpoint path retained; user-visible meaning is Division.
+ */
 router.use(
   '/roles',
   roleRoutes
+);
+
+router.use(
+  '/organization-settings',
+  organizationSettingsRoutes
 );
 
 router.use(

@@ -9,6 +9,7 @@ const organizationSchema = new Schema(
       required: true,
       trim: true,
     },
+
     slug: {
       type: String,
       required: true,
@@ -17,24 +18,49 @@ const organizationSchema = new Schema(
       trim: true,
       index: true,
     },
+
     status: {
       type: String,
-      enum: ['active', 'suspended'],
+      enum: [
+        'active',
+        'suspended',
+      ],
       default: 'active',
       index: true,
     },
+
     adminUserId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
       default: null,
     },
+
     createdBySuperAdminId: {
       type: Schema.Types.ObjectId,
       ref: 'SuperAdmin',
       required: true,
     },
+
+    leaveYearStartMonth: {
+      type: Number,
+      min: 1,
+      max: 12,
+      default: 1,
+    },
+
+    leaveYearStartDay: {
+      type: Number,
+      min: 1,
+      max: 31,
+      default: 1,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-export default mongoose.model('Organization', organizationSchema);
+export default mongoose.model(
+  'Organization',
+  organizationSchema
+);

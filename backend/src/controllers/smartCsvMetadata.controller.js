@@ -1,8 +1,12 @@
 import mongoose from 'mongoose';
-import { parse } from 'csv-parse/sync';
+
+import {
+  parse,
+} from 'csv-parse/sync';
 
 import User from '../models/User.js';
 import RoleLabel from '../models/RoleLabel.js';
+import Department from '../models/Department.js';
 import LeaveBalance from '../models/LeaveBalance.js';
 
 import {
@@ -14,9 +18,16 @@ import {
 } from '../utils/errors.js';
 
 import {
-  getCurrentLeaveYear,
+  resolveLeaveYearForUser,
+} from '../services/leaveYear.service.js';
+
+import {
   syncPolicyBalancesForUser,
 } from '../services/balance.service.js';
+
+import {
+  upsertYearlySnapshotForBalance,
+} from '../services/yearlySnapshot.service.js';
 
 function clean(value) {
   return String(
@@ -44,8 +55,8 @@ function getField(
   ...aliases
 ) {
   for (
-    const alias of
-    aliases
+    const alias
+    of aliases
   ) {
     const wanted =
       keyToken(
@@ -64,7 +75,8 @@ function getField(
       );
 
     if (
-      key !== undefined
+      key !==
+      undefined
     ) {
       return row[key];
     }
@@ -80,7 +92,9 @@ function parseBool(value) {
     '1',
     'y',
   ].includes(
-    normalize(value)
+    normalize(
+      value
+    )
   );
 }
 
@@ -96,22 +110,29 @@ function parseRows(file) {
       parse(
         file.buffer,
         {
-          columns: true,
+          columns:
+            true,
           skip_empty_lines:
             true,
-          trim: true,
-          bom: true,
+          trim:
+            true,
+          bom:
+            true,
         }
       );
 
-    if (!rows.length) {
+    if (
+      !rows.length
+    ) {
       throw new ValidationError(
         'CSV file does not contain employee rows.'
       );
     }
 
     return rows;
-  } catch (error) {
+  } catch (
+    error
+  ) {
     if (
       error instanceof
       ValidationError
@@ -125,37 +146,43 @@ function parseRows(file) {
   }
 }
 
-function usedLeaveTypes(rawRows) {
+function usedLeaveTypes(
+  rawRows
+) {
   const headers =
     Object.keys(
-      rawRows[0] ||
+      rawRows[
+        0
+      ] ||
         {}
     );
 
   return Array.from(
     new Set(
       headers
-        .map((header) => {
-          const token =
-            keyToken(
-              header
-            );
+        .map(
+          (header) => {
+            const token =
+              keyToken(
+                header
+              );
 
-          const match =
-            token.match(
-              /^(.+?)used$/
-            );
+            const match =
+              token.match(
+                /^(.+?)used$/
+              );
 
-          if (
-            !match?.[1] ||
-            match[1] ===
-              'total'
-          ) {
-            return '';
+            if (
+              !match?.[1] ||
+              match[1] ===
+                'total'
+            ) {
+              return '';
+            }
+
+            return match[1];
           }
-
-          return match[1];
-        })
+        )
         .filter(Boolean)
     )
   );
@@ -173,38 +200,23 @@ function usedValue(
     );
 
   if (
-    clean(value) ===
+    clean(
+      value
+    ) ===
     ''
   ) {
     return null;
   }
 
-  return Number(value);
-}
-
-function quotaValue(
-  row,
-  leaveType
-) {
-  const value =
-    getField(
-      row,
-      `${leaveType}Quota`,
-      `${leaveType}_quota`
-    );
-
-  if (
-    clean(value) ===
-    ''
-  ) {
-    return null;
-  }
-
-  return Number(value);
+  return Number(
+    value
+  );
 }
 
 async function buildMetadataPreview(
-  rawRows
+  rawRows,
+  forceEmails =
+    new Set()
 ) {
   const leaveTypes =
     usedLeaveTypes(
@@ -225,31 +237,35 @@ async function buildMetadataPreview(
       )
       .filter(Boolean);
 
-  /*
-   * Match the mature Smart CSV behavior: existing emails are skipped.
-   * Raw lookup is used only to identify conflicts and never exposes another
-   * organization's employee data.
-   */
   const [
-    roleLabels,
+    divisions,
+    departments,
     existingUsers,
-  ] = await Promise.all([
-    RoleLabel.find({})
-      .select('name')
-      .lean(),
+  ] =
+    await Promise.all([
+      RoleLabel.find({})
+        .select(
+          'name'
+        )
+        .lean(),
 
-    User.collection
-      .find({
+      Department.find({})
+        .select(
+          'name divisionName'
+        )
+        .lean(),
+
+      User.find({
         email: {
           $in:
             rawEmails,
         },
       })
-      .project({
-        email: 1,
-      })
-      .toArray(),
-  ]);
+        .select(
+          'email'
+        )
+        .lean(),
+    ]);
 
   const existingEmailSet =
     new Set(
@@ -261,25 +277,42 @@ async function buildMetadataPreview(
       )
     );
 
-  const roleSet =
+  const divisionSet =
     new Set(
-      roleLabels.map(
-        (role) =>
+      divisions.map(
+        (division) =>
           normalize(
-            role.name
+            division.name
           )
       )
     );
 
-  const missingRoles =
+  const departmentByName =
+    new Map(
+      departments.map(
+        (department) => [
+          normalize(
+            department.name
+          ),
+          department,
+        ]
+      )
+    );
+
+  const missingDivisions =
     new Set();
 
-  const errors = [];
+  const errors =
+    [];
 
   rawRows.forEach(
-    (row, index) => {
+    (
+      row,
+      index
+    ) => {
       const rowNumber =
-        index + 2;
+        index +
+        2;
 
       const email =
         normalize(
@@ -294,15 +327,19 @@ async function buildMetadataPreview(
         email &&
         existingEmailSet.has(
           email
+        ) &&
+        !forceEmails.has(
+          email
         )
       ) {
         return;
       }
 
-      const roleLabel =
+      const division =
         clean(
           getField(
             row,
+            'division',
             'roleLabel',
             'jobRole',
             'hrRole',
@@ -311,21 +348,54 @@ async function buildMetadataPreview(
         );
 
       if (
-        roleLabel &&
-        !roleSet.has(
+        division &&
+        !divisionSet.has(
           normalize(
-            roleLabel
+            division
           )
         )
       ) {
-        missingRoles.add(
-          roleLabel
+        missingDivisions.add(
+          division
         );
       }
 
+      const departmentName =
+        clean(
+          getField(
+            row,
+            'department',
+            'dept'
+          )
+        );
+
+      const existingDepartment =
+        departmentByName.get(
+          normalize(
+            departmentName
+          )
+        );
+
+      if (
+        existingDepartment?.divisionName &&
+        division &&
+        normalize(
+          existingDepartment.divisionName
+        ) !==
+          normalize(
+            division
+          )
+      ) {
+        errors.push({
+          rowNumber,
+          message:
+            `Department "${departmentName}" belongs to Division "${existingDepartment.divisionName}", not "${division}".`,
+        });
+      }
+
       for (
-        const leaveType of
-        leaveTypes
+        const leaveType
+        of leaveTypes
       ) {
         const used =
           usedValue(
@@ -334,7 +404,8 @@ async function buildMetadataPreview(
           );
 
         if (
-          used === null
+          used ===
+          null
         ) {
           continue;
         }
@@ -343,34 +414,13 @@ async function buildMetadataPreview(
           !Number.isFinite(
             used
           ) ||
-          used < 0
+          used <
+            0
         ) {
           errors.push({
             rowNumber,
             message:
               `${leaveType}Used must be a number greater than or equal to 0.`,
-          });
-          continue;
-        }
-
-        const quota =
-          quotaValue(
-            row,
-            leaveType
-          );
-
-        if (
-          quota !== null &&
-          Number.isFinite(
-            quota
-          ) &&
-          quota >= 0 &&
-          used > quota
-        ) {
-          errors.push({
-            rowNumber,
-            message:
-              `${leaveType}Used (${used}) cannot be greater than ${leaveType}Quota (${quota}).`,
           });
         }
       }
@@ -378,12 +428,22 @@ async function buildMetadataPreview(
   );
 
   return {
+    missingDivisions:
+      Array.from(
+        missingDivisions
+      ),
+
+    /*
+     * Compatibility key for the current frontend component.
+     */
     missingRoles:
       Array.from(
-        missingRoles
+        missingDivisions
       ),
+
     usedLeaveTypes:
       leaveTypes,
+
     errors,
   };
 }
@@ -405,7 +465,8 @@ export const previewSmartCsvMetadata =
         );
 
       res.json({
-        success: true,
+        success:
+          true,
         preview,
       });
     }
@@ -422,7 +483,8 @@ export const commitSmartCsvMetadata =
           req.file
         );
 
-      let decisions = {};
+      let decisions =
+        {};
 
       try {
         decisions =
@@ -438,28 +500,6 @@ export const commitSmartCsvMetadata =
         );
       }
 
-      const preview =
-        await buildMetadataPreview(
-          rawRows
-        );
-
-      if (
-        preview.errors.length
-      ) {
-        throw new ValidationError(
-          'CSV contains invalid starting leave usage values.'
-        );
-      }
-
-      if (
-        preview.missingRoles.length &&
-        !decisions.autoCreateRoles
-      ) {
-        throw new ValidationError(
-          'Missing Roles exist. Allow automatic Role creation before importing.'
-        );
-      }
-
       const targetEmails =
         new Set(
           (
@@ -470,6 +510,35 @@ export const commitSmartCsvMetadata =
           )
         );
 
+      const preview =
+        await buildMetadataPreview(
+          rawRows,
+          targetEmails
+        );
+
+      if (
+        preview.errors.length
+      ) {
+        throw new ValidationError(
+          'CSV contains invalid Division / starting leave usage values.'
+        );
+      }
+
+      const autoCreateDivisions =
+        Boolean(
+          decisions.autoCreateDivisions ||
+          decisions.autoCreateRoles
+        );
+
+      if (
+        preview.missingDivisions.length &&
+        !autoCreateDivisions
+      ) {
+        throw new ValidationError(
+          'Missing Divisions exist. Allow automatic Division creation before importing.'
+        );
+      }
+
       if (
         targetEmails.size ===
         0
@@ -477,8 +546,10 @@ export const commitSmartCsvMetadata =
         return res.json({
           success: true,
           data: {
-            employeesUpdated: 0,
-            balancesUpdated: 0,
+            employeesUpdated:
+              0,
+            balancesUpdated:
+              0,
           },
         });
       }
@@ -512,7 +583,8 @@ export const commitSmartCsvMetadata =
       const users =
         await User.find({
           email: {
-            $in: emails,
+            $in:
+              emails,
           },
         });
 
@@ -530,64 +602,30 @@ export const commitSmartCsvMetadata =
 
       if (
         userByEmail.size !==
-        new Set(emails).size
+        new Set(
+          emails
+        ).size
       ) {
         throw new ValidationError(
-          'One or more newly imported employees could not be resolved for HR Role / leave balance setup.'
+          'One or more newly imported employees could not be resolved for Division / leave balance setup.'
         );
       }
-
-      const year =
-        getCurrentLeaveYear();
-
-      /*
-       * Reuse the existing LeavePolicy -> Grade quota sync instead of
-       * duplicating quota logic here.
-       */
-      for (
-        const user of
-        users
-      ) {
-        await syncPolicyBalancesForUser(
-          user._id,
-          year
-        );
-      }
-
-      const balances =
-        await LeaveBalance.find({
-          employeeId: {
-            $in:
-              users.map(
-                (user) =>
-                  user._id
-              ),
-          },
-          year,
-        });
-
-      const balanceByKey =
-        new Map(
-          balances.map(
-            (balance) => [
-              `${balance.employeeId}:${normalize(balance.leaveType)}`,
-              balance,
-            ]
-          )
-        );
 
       const leaveTypes =
         preview.usedLeaveTypes;
 
-      const plannedBalanceUpdates =
-        [];
-
       const plannedUserUpdates =
         [];
 
+      const plannedDepartmentAssignments =
+        [];
+
+      const plannedBalanceUpdates =
+        [];
+
       for (
-        const row of
-        targetRows
+        const row
+        of targetRows
       ) {
         const email =
           normalize(
@@ -603,14 +641,24 @@ export const commitSmartCsvMetadata =
             email
           );
 
-        const roleLabel =
+        const division =
           clean(
             getField(
               row,
+              'division',
               'roleLabel',
               'jobRole',
               'hrRole',
               'masterRole'
+            )
+          );
+
+        const departmentName =
+          clean(
+            getField(
+              row,
+              'department',
+              'dept'
             )
           );
 
@@ -620,11 +668,12 @@ export const commitSmartCsvMetadata =
             'canApproveOtherDepartments'
           );
 
-        const userSet = {};
+        const userSet =
+          {};
 
-        if (roleLabel) {
+        if (division) {
           userSet.roleLabel =
-            roleLabel;
+            division;
         }
 
         if (
@@ -632,7 +681,8 @@ export const commitSmartCsvMetadata =
             'manager' &&
           clean(
             canApproveValue
-          ) !== ''
+          ) !==
+            ''
         ) {
           userSet.canApproveOtherDepartments =
             parseBool(
@@ -653,9 +703,48 @@ export const commitSmartCsvMetadata =
           });
         }
 
+        if (
+          division &&
+          departmentName
+        ) {
+          plannedDepartmentAssignments.push({
+            division,
+            departmentName,
+          });
+        }
+
+        const year =
+          await resolveLeaveYearForUser(
+            user
+          );
+
+        await syncPolicyBalancesForUser(
+          user._id,
+          year
+        );
+
+        const balances =
+          await LeaveBalance.find({
+            employeeId:
+              user._id,
+            year,
+          });
+
+        const balanceMap =
+          new Map(
+            balances.map(
+              (balance) => [
+                normalize(
+                  balance.leaveType
+                ),
+                balance,
+              ]
+            )
+          );
+
         for (
-          const leaveType of
-          leaveTypes
+          const leaveType
+          of leaveTypes
         ) {
           const used =
             usedValue(
@@ -664,18 +753,24 @@ export const commitSmartCsvMetadata =
             );
 
           if (
-            used === null
+            used ===
+            null
           ) {
             continue;
           }
 
           const balance =
-            balanceByKey.get(
-              `${user._id}:${normalize(leaveType)}`
+            balanceMap.get(
+              normalize(
+                leaveType
+              )
             );
 
           if (!balance) {
-            if (used === 0) {
+            if (
+              used ===
+              0
+            ) {
               continue;
             }
 
@@ -700,6 +795,7 @@ export const commitSmartCsvMetadata =
             balanceId:
               balance._id,
             used,
+            user,
           });
         }
       }
@@ -711,11 +807,11 @@ export const commitSmartCsvMetadata =
         await session.withTransaction(
           async () => {
             if (
-              decisions.autoCreateRoles
+              autoCreateDivisions
             ) {
               for (
-                const name of
-                preview.missingRoles
+                const name
+                of preview.missingDivisions
               ) {
                 await RoleLabel.updateOne(
                   {
@@ -727,7 +823,8 @@ export const commitSmartCsvMetadata =
                     },
                   },
                   {
-                    upsert: true,
+                    upsert:
+                      true,
                     session,
                   }
                 );
@@ -735,8 +832,52 @@ export const commitSmartCsvMetadata =
             }
 
             for (
-              const update of
-              plannedUserUpdates
+              const assignment
+              of plannedDepartmentAssignments
+            ) {
+              const department =
+                await Department.findOne({
+                  name:
+                    assignment.departmentName,
+                }).session(
+                  session
+                );
+
+              if (!department) {
+                throw new ValidationError(
+                  `Department "${assignment.departmentName}" could not be resolved.`
+                );
+              }
+
+              if (
+                department.divisionName &&
+                normalize(
+                  department.divisionName
+                ) !==
+                  normalize(
+                    assignment.division
+                  )
+              ) {
+                throw new ValidationError(
+                  `Department "${department.name}" already belongs to Division "${department.divisionName}".`
+                );
+              }
+
+              if (
+                !department.divisionName
+              ) {
+                department.divisionName =
+                  assignment.division;
+
+                await department.save({
+                  session,
+                });
+              }
+            }
+
+            for (
+              const update
+              of plannedUserUpdates
             ) {
               await User.updateOne(
                 {
@@ -754,8 +895,8 @@ export const commitSmartCsvMetadata =
             }
 
             for (
-              const update of
-              plannedBalanceUpdates
+              const update
+              of plannedBalanceUpdates
             ) {
               await LeaveBalance.updateOne(
                 {
@@ -777,6 +918,23 @@ export const commitSmartCsvMetadata =
         );
       } finally {
         await session.endSession();
+      }
+
+      for (
+        const update
+        of plannedBalanceUpdates
+      ) {
+        const balance =
+          await LeaveBalance.findById(
+            update.balanceId
+          );
+
+        if (balance) {
+          await upsertYearlySnapshotForBalance(
+            balance,
+            update.user
+          );
+        }
       }
 
       res.json({

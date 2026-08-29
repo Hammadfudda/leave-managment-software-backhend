@@ -1,5 +1,6 @@
 import User from '../models/User.js';
 import RoleLabel from '../models/RoleLabel.js';
+import Department from '../models/Department.js';
 
 import {
   asyncHandler,
@@ -19,36 +20,31 @@ import {
 } from '../utils/errors.js';
 
 /*
-|--------------------------------------------------------------------------
-| UPDATE EMPLOYEE HR ROLE LABEL
-|--------------------------------------------------------------------------
-|
-| User.role is access control.
-| User.roleLabel is HR / Master Data metadata.
-| Keeping this endpoint separate prevents accidental permission changes.
-|
-*/
+ * Existing endpoint path /role-label is retained for compatibility.
+ * Its user-visible meaning is now Division.
+ */
 export const updateEmployeeRoleLabel =
   asyncHandler(
     async (
       req,
       res
     ) => {
-      const roleLabel =
+      const divisionName =
         String(
+          req.body?.division ||
           req.body?.roleLabel ||
           ''
         ).trim();
 
-      if (!roleLabel) {
+      if (!divisionName) {
         throw new ValidationError(
-          'Role is required.'
+          'Division is required.'
         );
       }
 
       const [
         user,
-        role,
+        selectedDivision,
       ] =
         await Promise.all([
           User.findById(
@@ -57,7 +53,7 @@ export const updateEmployeeRoleLabel =
 
           RoleLabel.findOne({
             name:
-              roleLabel,
+              divisionName,
           }),
         ]);
 
@@ -67,44 +63,66 @@ export const updateEmployeeRoleLabel =
         );
       }
 
-      if (!role) {
+      if (!selectedDivision) {
         throw new ValidationError(
-          'Unknown Role. Select a Role from Master Data or create it first.'
+          'Unknown Division. Select a Division from Master Data or create it first.'
         );
       }
 
-      const previousRole =
-        user.roleLabel || '';
+      const department =
+        user.department
+          ? await Department.findOne({
+              name:
+                user.department,
+            })
+          : null;
+
+      if (
+        department?.divisionName &&
+        department.divisionName !==
+          selectedDivision.name
+      ) {
+        throw new ValidationError(
+          `Department "${department.name}" belongs to Division "${department.divisionName}", not "${selectedDivision.name}".`
+        );
+      }
+
+      if (
+        department &&
+        !department.divisionName
+      ) {
+        department.divisionName =
+          selectedDivision.name;
+
+        await department.save();
+      }
+
+      const previousDivision =
+        user.roleLabel ||
+        '';
 
       user.roleLabel =
-        role.name;
+        selectedDivision.name;
 
       await user.save();
 
       await audit({
         actorId:
           req.currentUser._id,
-
         actorName:
           req.currentUser.fullName,
-
         action:
           'EDIT_EMPLOYEE',
-
         targetType:
           'User',
-
         targetId:
           user._id,
-
         affectedPerson:
           user.fullName,
-
         department:
           user.department,
-
         details:
-          `Updated HR Role from "${previousRole || 'None'}" to "${user.roleLabel}".`,
+          `Updated Division from "${previousDivision || 'None'}" to "${user.roleLabel}".`,
       });
 
       res.json({
