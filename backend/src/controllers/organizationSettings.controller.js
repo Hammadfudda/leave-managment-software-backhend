@@ -4,10 +4,6 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { audit } from '../utils/audit.js';
 
 import {
-  syncCurrentYearBalancesForAllEmployees,
-} from '../services/balance.service.js';
-
-import {
   formatLeaveYearStart,
   getLegacyLeaveYearScopeKey,
   getOrganizationLeaveYearConfig,
@@ -84,23 +80,20 @@ export const updateOrganizationSettings = asyncHandler(
       auditTargetId = legacy._id;
     }
 
-    let balancesResynced = true;
-    let balanceResyncWarning = '';
-
-    try {
-      await syncCurrentYearBalancesForAllEmployees();
-    } catch (error) {
-      balancesResynced = false;
-      balanceResyncWarning =
-        error?.message ||
-        'One or more employee balances could not be refreshed immediately.';
-
-      console.error(
-        'Leave Year Start saved, but immediate balance resync failed:',
-        error
-      );
-    }
-
+    /*
+     * IMPORTANT:
+     * Do not synchronously resync every employee here.
+     *
+     * The old implementation called
+     * syncCurrentYearBalancesForAllEmployees() before sending the response.
+     * On a real deployment that can take longer than the frontend's 15-second
+     * Axios timeout, even though the Leave Year Start has already been saved.
+     *
+     * Balance/proration logic remains centralized in balance.service.js.
+     * Whenever an employee balance is read, created, or otherwise synchronized,
+     * syncPolicyBalancesForUser() recalculates the current-year Granted quota
+     * using the latest organization Leave Year Start.
+     */
     await audit({
       actorId: req.currentUser._id,
       actorName: req.currentUser.fullName,
@@ -109,9 +102,9 @@ export const updateOrganizationSettings = asyncHandler(
       targetId: auditTargetId,
       details: `Leave Year Start changed from ${formatLeaveYearStart(
         previousConfig
-      )} to ${formatLeaveYearStart(config)}. Current employee balance resync: ${
-        balancesResynced ? 'completed' : 'warning'
-      }.`,
+      )} to ${formatLeaveYearStart(
+        config
+      )}. Current employee balances will use the updated Leave Year Start on their next balance synchronization.`,
     });
 
     res.json({
@@ -120,9 +113,8 @@ export const updateOrganizationSettings = asyncHandler(
         leaveYearStartDay: config.day,
         leaveYearStartMonth: config.month,
         leaveYearStart: formatLeaveYearStart(config),
-        balancesResynced,
-        balanceResyncWarning:
-          balanceResyncWarning || undefined,
+        balancesResynced: false,
+        balanceResyncDeferred: true,
       },
     });
   }
