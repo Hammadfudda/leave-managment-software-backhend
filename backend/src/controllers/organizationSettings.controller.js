@@ -2,7 +2,6 @@ import Organization from '../models/Organization.js';
 import LegacyOrganizationSettings from '../models/LegacyOrganizationSettings.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { audit } from '../utils/audit.js';
-
 import {
   formatLeaveYearStart,
   getLegacyLeaveYearScopeKey,
@@ -40,6 +39,24 @@ export const updateOrganizationSettings = asyncHandler(
       organizationId
     );
 
+    const changed =
+      Number(previousConfig.day) !==
+        Number(config.day) ||
+      Number(previousConfig.month) !==
+        Number(config.month);
+
+    if (!changed) {
+      return res.json({
+        success: true,
+        data: {
+          leaveYearStartDay: previousConfig.day,
+          leaveYearStartMonth: previousConfig.month,
+          leaveYearStart: formatLeaveYearStart(previousConfig),
+          unchanged: true,
+        },
+      });
+    }
+
     const organization = organizationId
       ? await Organization.findById(organizationId)
       : null;
@@ -55,9 +72,7 @@ export const updateOrganizationSettings = asyncHandler(
     } else {
       /*
        * Backward-compatible persistence for legacy/unscoped System Admin data.
-       * Do NOT attach the old user to a newly-created tenant here; doing that
-       * would hide existing organizationId=null Division/Department/Employee
-       * records behind tenant filtering on the next request.
+       * Do NOT attach the old user to a newly-created tenant here.
        */
       const legacy = await LegacyOrganizationSettings.findOneAndUpdate(
         {
@@ -81,18 +96,9 @@ export const updateOrganizationSettings = asyncHandler(
     }
 
     /*
-     * IMPORTANT:
      * Do not synchronously resync every employee here.
-     *
-     * The old implementation called
-     * syncCurrentYearBalancesForAllEmployees() before sending the response.
-     * On a real deployment that can take longer than the frontend's 15-second
-     * Axios timeout, even though the Leave Year Start has already been saved.
-     *
-     * Balance/proration logic remains centralized in balance.service.js.
-     * Whenever an employee balance is read, created, or otherwise synchronized,
-     * syncPolicyBalancesForUser() recalculates the current-year Granted quota
-     * using the latest organization Leave Year Start.
+     * Balance/proration remains centralized in balance.service.js and uses
+     * the latest Start year date on the next balance synchronization/read.
      */
     await audit({
       actorId: req.currentUser._id,
@@ -100,11 +106,11 @@ export const updateOrganizationSettings = asyncHandler(
       action: 'EDIT_LEAVE_YEAR_START',
       targetType: auditTargetType,
       targetId: auditTargetId,
-      details: `Leave Year Start changed from ${formatLeaveYearStart(
+      details: `Start year date changed from ${formatLeaveYearStart(
         previousConfig
       )} to ${formatLeaveYearStart(
         config
-      )}. Current employee balances will use the updated Leave Year Start on their next balance synchronization.`,
+      )}. Current employee balances will use the updated Start year date on their next balance synchronization.`,
     });
 
     res.json({
