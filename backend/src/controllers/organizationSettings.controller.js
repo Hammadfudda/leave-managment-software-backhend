@@ -1,7 +1,7 @@
 import Organization from '../models/Organization.js';
+import LegacyOrganizationSettings from '../models/LegacyOrganizationSettings.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { audit } from '../utils/audit.js';
-import { NotFoundError } from '../utils/errors.js';
 
 import {
   syncCurrentYearBalancesForAllEmployees,
@@ -9,23 +9,16 @@ import {
 
 import {
   formatLeaveYearStart,
+  getLegacyLeaveYearScopeKey,
+  getOrganizationLeaveYearConfig,
   normalizeLeaveYearStart,
 } from '../services/leaveYear.service.js';
 
 export const getOrganizationSettings = asyncHandler(
   async (req, res) => {
-    const organization = await Organization.findById(
+    const config = await getOrganizationLeaveYearConfig(
       req.currentUser.organizationId
     );
-
-    if (!organization) {
-      throw new NotFoundError('Organization not found.');
-    }
-
-    const config = normalizeLeaveYearStart({
-      day: organization.leaveYearStartDay ?? 1,
-      month: organization.leaveYearStartMonth ?? 1,
-    });
 
     res.json({
       success: true,
@@ -45,33 +38,52 @@ export const updateOrganizationSettings = asyncHandler(
       month: req.body?.leaveYearStartMonth,
     });
 
-    const organization = await Organization.findById(
-      req.currentUser.organizationId
+    const organizationId = req.currentUser.organizationId;
+
+    const previousConfig = await getOrganizationLeaveYearConfig(
+      organizationId
     );
 
-    if (!organization) {
-      throw new NotFoundError('Organization not found.');
+    const organization = organizationId
+      ? await Organization.findById(organizationId)
+      : null;
+
+    let auditTargetType = 'Organization';
+    let auditTargetId = organization?._id || req.currentUser._id;
+
+    if (organization) {
+      organization.leaveYearStartDay = config.day;
+      organization.leaveYearStartMonth = config.month;
+
+      await organization.save();
+    } else {
+      /*
+       * Backward-compatible persistence for legacy/unscoped System Admin data.
+       * Do NOT attach the old user to a newly-created tenant here; doing that
+       * would hide existing organizationId=null Division/Department/Employee
+       * records behind tenant filtering on the next request.
+       */
+      const legacy = await LegacyOrganizationSettings.findOneAndUpdate(
+        {
+          scopeKey: getLegacyLeaveYearScopeKey(organizationId),
+        },
+        {
+          $set: {
+            leaveYearStartDay: config.day,
+            leaveYearStartMonth: config.month,
+          },
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        }
+      );
+
+      auditTargetType = 'LegacyOrganizationSettings';
+      auditTargetId = legacy._id;
     }
 
-    const previous = formatLeaveYearStart({
-      day: organization.leaveYearStartDay ?? 1,
-      month: organization.leaveYearStartMonth ?? 1,
-    });
-
-    organization.leaveYearStartDay = config.day;
-    organization.leaveYearStartMonth = config.month;
-
-    await organization.save();
-
-    /*
-     * Existing balance.service.js is the only source of truth for quotas.
-     * Re-run it after the organization Leave Year Start changes so current
-     * employees immediately receive the correct prorated Granted values.
-     *
-     * This is best-effort so one unrelated legacy employee/policy problem
-     * cannot roll back or hide a successfully saved organization setting.
-     * Any later balance read also self-syncs through the same service.
-     */
     let balancesResynced = true;
     let balanceResyncWarning = '';
 
@@ -93,11 +105,11 @@ export const updateOrganizationSettings = asyncHandler(
       actorId: req.currentUser._id,
       actorName: req.currentUser.fullName,
       action: 'EDIT_LEAVE_YEAR_START',
-      targetType: 'Organization',
-      targetId: organization._id,
-      details: `Leave Year Start changed from ${previous} to ${formatLeaveYearStart(
-        config
-      )}. Current employee balance resync: ${
+      targetType: auditTargetType,
+      targetId: auditTargetId,
+      details: `Leave Year Start changed from ${formatLeaveYearStart(
+        previousConfig
+      )} to ${formatLeaveYearStart(config)}. Current employee balance resync: ${
         balancesResynced ? 'completed' : 'warning'
       }.`,
     });

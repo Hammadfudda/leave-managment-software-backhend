@@ -5,6 +5,9 @@ import {
 import LeaveBalance
   from '../models/LeaveBalance.js';
 
+import Department
+  from '../models/Department.js';
+
 import YearlyLeaveSnapshot
   from '../models/YearlyLeaveSnapshot.js';
 
@@ -68,23 +71,47 @@ async function liveRowsForCurrentYear(
    * collection. No snapshot refresh, no employee-by-employee recalculation,
    * and no write is performed by this GET request.
    */
-  const balances =
-    await LeaveBalance.find({
-      year,
-    })
-      .populate({
-        path:
-          'employeeId',
-        select:
-          'fullName employeeId roleLabel department designation gradeId status detailsStatus',
-        populate: {
-          path:
-            'gradeId',
-          select:
-            'name',
-        },
+  const [
+    balances,
+    departments,
+  ] =
+    await Promise.all([
+      LeaveBalance.find({
+        year,
       })
-      .lean();
+        .populate({
+          path:
+            'employeeId',
+          select:
+            'fullName employeeId roleLabel department designation gradeId status detailsStatus',
+          populate: {
+            path:
+              'gradeId',
+            select:
+              'name',
+          },
+        })
+        .lean(),
+
+      Department.find({})
+        .select(
+          'name divisionName'
+        )
+        .lean(),
+    ]);
+
+  const divisionByDepartment =
+    new Map(
+      departments.map(
+        (
+          department
+        ) => [
+          department.name,
+          department.divisionName ||
+            '',
+        ]
+      )
+    );
 
   return balances
     .filter(
@@ -133,6 +160,9 @@ async function liveRowsForCurrentYear(
 
           division:
             employee.roleLabel ||
+            divisionByDepartment.get(
+              employee.department
+            ) ||
             '',
 
           department:

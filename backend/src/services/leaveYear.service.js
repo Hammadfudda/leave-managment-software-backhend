@@ -1,4 +1,5 @@
 import Organization from '../models/Organization.js';
+import LegacyOrganizationSettings from '../models/LegacyOrganizationSettings.js';
 import { ValidationError } from '../utils/errors.js';
 
 function isValidDayMonth(day, month) {
@@ -101,28 +102,54 @@ export function parseLeaveYearStart(value) {
   return null;
 }
 
+export function getLegacyLeaveYearScopeKey(organizationId) {
+  return organizationId
+    ? `missing-organization:${String(organizationId)}`
+    : 'legacy-unscoped';
+}
+
 export async function getOrganizationLeaveYearConfig(organizationId, options = {}) {
-  if (!organizationId) {
-    return { day: 1, month: 1 };
+  let organization = null;
+
+  if (organizationId) {
+    let query = Organization.findById(organizationId).select(
+      'leaveYearStartDay leaveYearStartMonth'
+    );
+
+    if (options.session) {
+      query = query.session(options.session);
+    }
+
+    organization = await query.lean();
   }
 
-  let query = Organization.findById(organizationId).select(
-    'leaveYearStartDay leaveYearStartMonth'
-  );
+  if (organization) {
+    return normalizeLeaveYearStart({
+      day: organization.leaveYearStartDay ?? 1,
+      month: organization.leaveYearStartMonth ?? 1,
+    });
+  }
+
+  /*
+   * Legacy/backward-compatible fallback.
+   * Old System Administrator data can have organizationId=null (or an old
+   * dangling Organization id). Persist a Leave Year setting without changing
+   * the user's tenant id, so existing unscoped Division/Department data does
+   * not disappear or get moved into a new tenant unexpectedly.
+   */
+  let legacyQuery = LegacyOrganizationSettings.findOne({
+    scopeKey: getLegacyLeaveYearScopeKey(organizationId),
+  });
 
   if (options.session) {
-    query = query.session(options.session);
+    legacyQuery = legacyQuery.session(options.session);
   }
 
-  const organization = await query.lean();
-
-  if (!organization) {
-    return { day: 1, month: 1 };
-  }
+  const legacy = await legacyQuery.lean();
 
   return normalizeLeaveYearStart({
-    day: organization.leaveYearStartDay ?? 1,
-    month: organization.leaveYearStartMonth ?? 1,
+    day: legacy?.leaveYearStartDay ?? 1,
+    month: legacy?.leaveYearStartMonth ?? 1,
   });
 }
 
