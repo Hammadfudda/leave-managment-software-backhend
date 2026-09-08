@@ -8,13 +8,22 @@ import { generalLimiter } from './middleware/rateLimit.js';
 
 const app = express();
 
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://leave-managment-software.vercel.app',
+  ...(process.env.CLIENT_URL || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+];
+
 // Behind a proxy (Render/Railway/Nginx) so rate limiting and req.ip work.
 app.set('trust proxy', 1);
 
 app.use(helmet());
 app.use(
   cors({
-    origin: (process.env.CLIENT_URL || 'http://localhost:5173').split(',').map((s) => s.trim()),
+    origin: allowedOrigins,
     credentials: true, // the refresh token lives in an httpOnly cookie
   })
 );
