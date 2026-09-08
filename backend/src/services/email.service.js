@@ -20,14 +20,12 @@ export async function sendEmail({ to, subject, html }) {
       console.warn('RESEND_API_KEY not set — skipping email:', subject, '->', to);
       return false;
     }
-
     await resend.emails.send({
       from: getSender(),
       to,
       subject,
       html,
     });
-
     return true;
   } catch (err) {
     console.error('Email send failed:', err.message);

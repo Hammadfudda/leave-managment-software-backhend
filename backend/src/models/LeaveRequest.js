@@ -1,271 +1,74 @@
 import mongoose from 'mongoose';
 
-import {
-  tenantPlugin,
-} from '../utils/tenantPlugin.js';
-
 const { Schema } = mongoose;
 
+// Spec Part 2.7
 const leaveRequestSchema = new Schema(
   {
-    employeeId: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-    },
+    employeeId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    employeeName: String,
+    department: String,
+    leaveType: { type: String, required: true },
 
-    employeeName: {
-      type: String,
-      required: true,
-    },
+    startDate: { type: Date, required: true },
+    endDate: { type: Date, required: true },
+    totalDaysRequested: { type: Number, required: true }, // raw calendar days
+    totalWorkingDays: { type: Number, required: true }, // after weekend exclusion — this is what's deducted
+    excludedWeekendDates: [{ type: String }], // ISO dates dropped from the count, for display
 
-    department: {
-      type: String,
-      required: true,
-    },
-
-    leaveType: {
-      type: String,
-      required: true,
-    },
-
-    startDate: {
-      type: Date,
-      required: true,
-    },
-
-    endDate: {
-      type: Date,
-      required: true,
-    },
-
-    totalDaysRequested: {
-      type: Number,
-      required: true,
-    },
-
-    totalWorkingDays: {
-      type: Number,
-      required: true,
-    },
-
-    excludedWeekendDates: [
-      {
-        type: String,
-      },
-    ],
-
-    reason: {
-      type: String,
-      required: true,
-    },
-
-    attachmentName: {
-      type: String,
-      default: null,
-    },
-
-    attachmentPublicId: {
-      type: String,
-      default: null,
-    },
-
-    attachmentResourceType: {
-      type: String,
-      enum: ['image', 'raw'],
-      default: null,
-    },
-
-    attachmentFormat: {
-      type: String,
-      default: null,
-    },
-
-    attachmentBytes: {
-      type: Number,
-      default: null,
-    },
-
-    attachmentMimeType: {
-      type: String,
-      default: null,
-    },
-
-    attachmentVersion: {
-      type: Number,
-      default: null,
-    },
+    reason: { type: String, required: true },
+    attachmentUrl: { type: String },
+    attachmentName: { type: String },
 
     status: {
       type: String,
-      enum: [
-        'pending',
-        'approved',
-        'rejected',
-        'cancelled',
-      ],
+      enum: ['pending', 'approved', 'rejected', 'cancelled'],
       default: 'pending',
     },
 
-    requiredApproverIds: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: 'User',
-      },
-    ],
+    // Sequential approval tracking — see Part 5.
+    requiredApproverIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    approvedByIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    rejectedByIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
 
-    approvedByIds: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: 'User',
-      },
-    ],
-
-    rejectedByIds: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: 'User',
-      },
-    ],
-
-    isAdminOnlyDecision: {
-      type: Boolean,
-      default: false,
-    },
+    // ADDENDUM 2.1 — copied from policy.adminOnlyApproval at submission time.
+    // When true, requiredApproverIds is empty BY DESIGN and the request must
+    // NOT auto-approve: it sits at 'pending' until an Admin decides it.
+    isAdminOnlyDecision: { type: Boolean, default: false },
 
     approvalHistory: [
       {
-        approverId: {
-          type: Schema.Types.ObjectId,
-          ref: 'User',
-        },
-
+        approverId: { type: Schema.Types.ObjectId, ref: 'User' },
         approverName: String,
         approverRole: String,
-
-        action: {
-          type: String,
-          enum: [
-            'approved',
-            'rejected',
-            'cancelled',
-          ],
-        },
-
+        action: { type: String, enum: ['approved', 'rejected', 'cancelled'] },
         comment: String,
-
-        actionDate: {
-          type: Date,
-          default: Date.now,
-        },
-
-        isAdminOverride: {
-          type: Boolean,
-          default: false,
-        },
-
-        isAdminStop: {
-          type: Boolean,
-          default: false,
-        },
-
-        previousStatus: {
-          type: String,
-          default: null,
-        },
-
-        newStatus: {
-          type: String,
-          default: null,
-        },
-
-        effectiveReturnDate: {
-          type: Date,
-          default: null,
-        },
+        actionDate: { type: Date, default: Date.now },
       },
     ],
 
-    isExtension: {
-      type: Boolean,
-      default: false,
-    },
+    // Extension requests — see Part 7.1. A brand new LeaveRequest document, not
+    // a mutation of the original.
+    isExtension: { type: Boolean, default: false },
+    originalRequestId: { type: Schema.Types.ObjectId, ref: 'LeaveRequest', default: null },
+    isPaidOverride: { type: Boolean, default: null },
 
-    originalRequestId: {
-      type: Schema.Types.ObjectId,
-      ref: 'LeaveRequest',
-      default: null,
-    },
+    // Stop-early requests — see Part 7.2. Also a brand new document.
+    isStopRequest: { type: Boolean, default: false },
 
-    isPaidOverride: {
-      type: Boolean,
-      default: null,
-    },
-
-    isStopRequest: {
-      type: Boolean,
-      default: false,
-    },
-
-    cancelledBy: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
-    },
-
-    cancelledByName: {
-      type: String,
-      default: null,
-    },
-
-    cancelledReason: {
-      type: String,
-      default: null,
-    },
-
-    daysUsedBeforeCancel: {
-      type: Number,
-      default: null,
-    },
-
-    actualEndDate: {
-      type: Date,
-      default: null,
-    },
+    // Populated once a stop-request against this original request is approved.
+    cancelledBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    cancelledByName: String,
+    cancelledReason: String,
+    daysUsedBeforeCancel: Number,
+    actualEndDate: Date,
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-leaveRequestSchema.plugin(
-  tenantPlugin
-);
+leaveRequestSchema.index({ employeeId: 1, status: 1 });
+leaveRequestSchema.index({ requiredApproverIds: 1, status: 1 });
+leaveRequestSchema.index({ originalRequestId: 1 });
+leaveRequestSchema.index({ isAdminOnlyDecision: 1, status: 1 });
 
-leaveRequestSchema.index({
-  organizationId: 1,
-  employeeId: 1,
-  status: 1,
-});
-
-leaveRequestSchema.index({
-  organizationId: 1,
-  requiredApproverIds: 1,
-  status: 1,
-});
-
-leaveRequestSchema.index({
-  organizationId: 1,
-  originalRequestId: 1,
-});
-
-leaveRequestSchema.index({
-  organizationId: 1,
-  isAdminOnlyDecision: 1,
-  status: 1,
-});
-
-export default mongoose.model(
-  'LeaveRequest',
-  leaveRequestSchema
-);
+export default mongoose.model('LeaveRequest', leaveRequestSchema);

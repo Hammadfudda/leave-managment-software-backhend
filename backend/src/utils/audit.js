@@ -1,47 +1,15 @@
 import AuditLog from '../models/AuditLog.js';
 
-/*
- * Existing callers still pass one argument.
- * Transactional callers may provide { session }.
+/**
+ * Spec Part 8.2/8.3 — every state-changing action writes an AuditLog entry in
+ * the same request. Audit writes must never silently break the action, but they
+ * must also never be skipped, so failures are logged loudly.
  */
-export async function audit(
-  entry,
-  options = {}
-) {
+export async function audit(entry) {
   try {
-    if (options.session) {
-      const rows =
-        await AuditLog.create(
-          [entry],
-          {
-            session:
-              options.session,
-          }
-        );
-
-      return rows[0];
-    }
-
-    return await AuditLog.create(
-      entry
-    );
+    return await AuditLog.create(entry);
   } catch (err) {
-    console.error(
-      'AUDIT WRITE FAILED',
-      entry.action,
-      err.message
-    );
-
-    /*
-     * Existing non-transactional callers preserve the previous best-effort
-     * audit behavior. For Admin override/stop transactions, an audit failure
-     * must abort the transaction so balance + leave state cannot commit
-     * without its required audit entry.
-     */
-    if (options.session) {
-      throw err;
-    }
-
+    console.error('AUDIT WRITE FAILED', entry.action, err.message);
     return null;
   }
 }
@@ -73,7 +41,4 @@ export const AUDIT_ACTIONS = [
   'CANCEL_LEAVE',
   'EXTEND_LEAVE',
   'REQUEST_STOP_LEAVE',
-  'EDIT_LEAVE_YEAR_START',
-  'ADMIN_OVERRIDE_LEAVE',
-  'ADMIN_STOP_LEAVE',
 ];

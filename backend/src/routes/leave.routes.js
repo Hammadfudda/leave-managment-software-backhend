@@ -1,147 +1,25 @@
-import {
-  Router,
-} from 'express';
-
+import { Router } from 'express';
 import * as leave from '../controllers/leave.controller.js';
+import { authenticate, authorize, loadUser } from '../middleware/auth.js';
+import { upload } from '../middleware/upload.js';
 
-import {
-  overrideDecision,
-  stopApprovedLeave,
-} from '../controllers/adminLeave.controller.js';
+const router = Router();
 
-import {
-  listAvailablePolicies,
-} from '../controllers/availablePolicies.controller.js';
+router.use(authenticate, loadUser);
 
-import {
-  authenticate,
-  authorize,
-  loadUser,
-} from '../middleware/auth.js';
+router.get('/available-types', leave.listAvailableLeaveTypes);
+router.get('/balance/:employeeId', leave.getBalance);
 
-import {
-  upload,
-} from '../middleware/upload.js';
+router.get('/', leave.listLeaveRequests);
+// Employees and managers submit their OWN leave. Admin never submits leave for
+// anyone, so admin is deliberately excluded from this one route (Part 5.1).
+router.post('/', authorize('employee', 'manager'), upload.single('attachment'), leave.createLeaveRequest);
 
-import {
-  validateNewLeaveRequest,
-} from '../middleware/validateNewLeaveRequest.js';
-
-import {
-  validateLeaveModification,
-} from '../middleware/validateLeaveModification.js';
-
-const router =
-  Router();
-
-router.use(
-  authenticate,
-  loadUser
-);
-
-router.get(
-  '/available-types',
-  leave.listAvailableLeaveTypes
-);
-
-router.get(
-  '/available-policies',
-  listAvailablePolicies
-);
-
-router.get(
-  '/balance/:employeeId',
-  leave.getBalance
-);
-
-router.get(
-  '/',
-  leave.listLeaveRequests
-);
-
-router.post(
-  '/',
-  authorize(
-    'employee',
-    'manager'
-  ),
-  upload.single(
-    'attachment'
-  ),
-  validateNewLeaveRequest,
-  leave.createLeaveRequest
-);
-
-router.get(
-  '/:id/attachment-url',
-  leave.getAttachmentUrl
-);
-
-router.get(
-  '/:id',
-  leave.getLeaveRequest
-);
-
-router.patch(
-  '/:id/approve',
-  authorize(
-    'admin',
-    'manager'
-  ),
-  leave.approve
-);
-
-router.patch(
-  '/:id/reject',
-  authorize(
-    'admin',
-    'manager'
-  ),
-  leave.reject
-);
-
-router.patch(
-  '/:id/act-on-behalf',
-  authorize(
-    'admin'
-  ),
-  leave.actOnBehalfOf
-);
-
-router.patch(
-  '/:id/admin-override',
-  authorize(
-    'admin'
-  ),
-  overrideDecision
-);
-
-router.patch(
-  '/:id/admin-stop',
-  authorize(
-    'admin'
-  ),
-  stopApprovedLeave
-);
-
-router.post(
-  '/:id/extend',
-  authorize(
-    'employee',
-    'manager'
-  ),
-  validateLeaveModification,
-  leave.extendLeave
-);
-
-router.post(
-  '/:id/request-stop',
-  authorize(
-    'employee',
-    'manager'
-  ),
-  validateLeaveModification,
-  leave.requestStopLeave
-);
+router.get('/:id', leave.getLeaveRequest);
+router.patch('/:id/approve', authorize('admin', 'manager'), leave.approve);
+router.patch('/:id/reject', authorize('admin', 'manager'), leave.reject);
+router.patch('/:id/act-on-behalf', authorize('admin'), leave.actOnBehalfOf);
+router.post('/:id/extend', authorize('employee', 'manager'), leave.extendLeave);
+router.post('/:id/request-stop', authorize('employee', 'manager'), leave.requestStopLeave);
 
 export default router;

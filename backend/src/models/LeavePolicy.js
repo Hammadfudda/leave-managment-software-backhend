@@ -1,229 +1,54 @@
 import mongoose from 'mongoose';
 
-import {
-  tenantPlugin,
-} from '../utils/tenantPlugin.js';
-
-import {
-  getTenantOrganizationId,
-} from '../utils/tenantContext.js';
-
 const { Schema } = mongoose;
 
-const gradeQuotaSchema = new Schema(
-  {
-    gradeId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Grade',
-      required: true,
-    },
-
-    yearlyQuota: {
-      type: Number,
-      required: true,
-      min: 0.5,
-    },
-  },
-  {
-    _id: false,
-  }
-);
-
+// Spec Part 2.6
 const leavePolicySchema = new Schema(
   {
-    leaveType: {
-      type: String,
-      required: true,
-      trim: true,
-      lowercase: true,
-    },
-    /*
-     * LEGACY COMPATIBILITY:
-     * Kept in schema so existing DB records / older code are not destroyed.
-     * New UI always uses "All Employees" and does not expose this field.
-     */
+    // 'annual' | 'sick' | 'casual' | 'unpaid' | 'maternity' | 'paternity' | custom
+    leaveType: { type: String, required: true },
     applicableRole: {
       type: String,
-      enum: [
-        'All Employees',
-        'employee',
-        'manager',
-        'admin',
-      ],
+      enum: ['All Employees', 'employee', 'manager', 'admin'],
       default: 'All Employees',
     },
-    /*
-     * FINAL SOURCE OF LEAVE ENTITLEMENT.
-     *
-     * Example:
-     * Annual Leave:
-     * Grade A -> 14
-     * Grade B -> 18
-     */
-    gradeQuotas: {
-      type: [gradeQuotaSchema],
-      required: true,
-      validate: {
-        validator(value) {
-          return (
-            Array.isArray(value) &&
-            value.length > 0
-          );
-        },
-        message:
-          'At least one grade and yearly quota is required.',
-      },
-    },
-    isPaid: {
-      type: Boolean,
-      default: true,
-    },
-
-    /*
-     * Kept only for backward compatibility.
-     * New UI does not expose Notice Days.
-     */
-    minDaysNoticeRequired: {
-      type: Number,
-      default: 0,
-    },
-
+    isPaid: { type: Boolean, default: true },
+    // advisory only, never blocks submission
+    minDaysNoticeRequired: { type: Number, default: 0 },
     documentRequirement: {
       type: String,
-      enum: [
-        'required',
-        'optional',
-        'not_required',
-      ],
+      enum: ['required', 'optional', 'not_required'],
       default: 'optional',
     },
-    /*
-     * Carry-forward belongs to Leave Policy, not Grade.
-     */
-    carryForwardAllowed: {
-      type: Boolean,
-      default: false,
-    },
 
-    maxCarryForwardDays: {
-      type: Number,
-      min: 0,
-      default: 0,
-    },
+    // ADDENDUM 2.1 — when true this leave type has NO approval chain at all.
+    // It is decided directly and solely by an Admin, and approvalRouting
+    // .approverIds is ignored (and forced empty by the controller).
+    adminOnlyApproval: { type: Boolean, default: false },
 
-    /*
-     * true:
-     * Employee's assigned Manager is final approver.
-     *
-     * false:
-     * Manual Manager Approval Chain.
-     */
-    finalApprovalMode: {
-      type: Boolean,
-      default: true,
-    },
-    /*
-     * department/designation are kept ONLY so old DB documents stay readable.
-     * New UI/controller writes them as null.
-     */
+    // FINAL MANAGER APPROVAL — when true, approvalRouting.approverIds is
+    // ignored entirely. At submission time the single required approver is
+    // resolved dynamically from the applicant's own employee.managerId, and
+    // that manager's decision is final (no second tier, no admin step).
+    // Completely independent of adminOnlyApproval.
+    finalApprovalMode: { type: Boolean, default: false },
+
     approvalRouting: {
-      designation: {
-        type: String,
-        default: null,
-      },
+      // These three describe WHO THIS POLICY APPLIES TO (the applicant scope).
+      // They are completely independent of approverIds below — do not let one
+      // influence the other. An earlier draft of this feature conflated the two
+      // and it was a real, shipped bug; do not repeat it.
+      designation: { type: String, default: null },
+      department: { type: String, default: null },
+      grade: { type: String, default: null },
 
-      department: {
-        type: String,
-        default: null,
-      },
-
-      approverIds: [
-        {
-          type: Schema.Types.ObjectId,
-          ref: 'User',
-        },
-      ],
-    },
-    /*
-     * Legacy compatibility for old requests/controllers.
-     * New Leave Policy UI never enables admin-only approval.
-     */
-    adminOnlyApproval: {
-      type: Boolean,
-      default: false,
+      // WHO APPROVES IT. Ordered array — index 0 is the gatekeeper who must act
+      // first; the rest form a parallel tier that only activates once the
+      // gatekeeper has approved. See Part 5.
+      approverIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
     },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-leavePolicySchema.plugin(tenantPlugin);
-
-/*
- * Current index preserved, with organizationId added in front.
- */
-leavePolicySchema.index({
-  organizationId: 1,
-  leaveType: 1,
-  applicableRole: 1,
-  'approvalRouting.department': 1,
-  'approvalRouting.designation': 1,
-});
-
-const LeavePolicy = mongoose.model(
-  'LeavePolicy',
-  leavePolicySchema
-);
-
-/*
-|--------------------------------------------------------------------------
-| TENANT-SAFE DISTINCT
-|--------------------------------------------------------------------------
-|
-| Mongoose 8 does not provide query middleware for Model.distinct().
-| Existing employee CSV export uses LeavePolicy.distinct('leaveType').
-| Wrap the model method directly so that call stays tenant-safe without
-| rewriting the 2,000+ line employee controller.
-|
-*/
-const mongooseDistinct =
-  LeavePolicy.distinct.bind(
-    LeavePolicy
-  );
-
-LeavePolicy.distinct = function tenantSafeDistinct(
-  field,
-  conditions = {}
-) {
-  const tenantId =
-    getTenantOrganizationId();
-
-  if (tenantId === undefined) {
-    return mongooseDistinct(
-      field,
-      conditions
-    );
-  }
-
-  const organizationId =
-    tenantId === null
-      ? null
-      : new mongoose.Types.ObjectId(
-          tenantId
-        );
-
-  return mongooseDistinct(
-    field,
-    {
-      $and: [
-        conditions || {},
-        {
-          organizationId,
-        },
-      ],
-    }
-  );
-};
-
-export default LeavePolicy;
+export default mongoose.model('LeavePolicy', leavePolicySchema);
