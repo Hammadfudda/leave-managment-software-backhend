@@ -2,6 +2,14 @@ import { Resend } from 'resend';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
+function getSender() {
+  const configuredSender = String(process.env.RESEND_FROM_EMAIL || '').trim();
+  const emailMatch = configuredSender.match(/<([^>]+)>/);
+  const address = emailMatch?.[1]?.trim() || configuredSender;
+
+  return `Nedd Consultant <${address}>`;
+}
+
 /**
  * Spec Part 8.1 — a failed notification must NEVER roll back the action that
  * triggered it. This function never throws.
@@ -12,7 +20,7 @@ export async function sendEmail({ to, subject, html }) {
       console.warn('RESEND_API_KEY not set — skipping email:', subject, '->', to);
       return false;
     }
-    await resend.emails.send({ from: process.env.RESEND_FROM_EMAIL, to, subject, html });
+    await resend.emails.send({ from: getSender(), to, subject, html });
     return true;
   } catch (err) {
     console.error('Email send failed:', err.message);
@@ -25,7 +33,7 @@ export function layout(title, body) {
   <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px">
     <h2 style="margin:0 0 16px">${title}</h2>
     <div style="font-size:15px;line-height:1.6;color:#333">${body}</div>
-    <p style="margin-top:28px;font-size:12px;color:#888">Leave Management System — Nedd Consultant</p>
+    <p style="margin-top:28px;font-size:12px;color:#888">Nedd Consultant</p>
   </div>`;
 }
 
@@ -34,7 +42,7 @@ export const templates = {
     layout(
       'Your account is ready',
       `<p>Hi ${user.fullName},</p>
-       <p>An account has been created for you on the Leave Management System.</p>
+        <p>An account has been created for you on Nedd Consultant.</p>
        <p><strong>Email:</strong> ${user.email}<br/>
           <strong>Temporary password:</strong> your CNIC (${user.cnic})</p>
        <p>Please sign in and change your password.</p>
