@@ -2,8 +2,9 @@ import crypto from 'node:crypto';
 
 import CredentialEmailJob from '../models/CredentialEmailJob.js';
 
-const THIRTY_SECONDS =
-  30 * 1000;
+import {
+  sendTemporaryAccountEmail,
+} from './temporaryPassword.service.js';
 
 function encryptionKey() {
   const source =
@@ -17,22 +18,14 @@ function encryptionKey() {
   }
 
   return crypto
-    .createHash(
-      'sha256'
-    )
-    .update(
-      source
-    )
+    .createHash('sha256')
+    .update(source)
     .digest();
 }
 
-function encryptPayload(
-  payload
-) {
+function encryptPayload(payload) {
   const iv =
-    crypto.randomBytes(
-      12
-    );
+    crypto.randomBytes(12);
 
   const cipher =
     crypto.createCipheriv(
@@ -44,9 +37,7 @@ function encryptPayload(
   const encrypted =
     Buffer.concat([
       cipher.update(
-        JSON.stringify(
-          payload
-        ),
+        JSON.stringify(payload),
         'utf8'
       ),
       cipher.final(),
@@ -54,25 +45,17 @@ function encryptPayload(
 
   return {
     encryptedPayload:
-      encrypted.toString(
-        'base64'
-      ),
+      encrypted.toString('base64'),
     iv:
-      iv.toString(
-        'base64'
-      ),
+      iv.toString('base64'),
     authTag:
       cipher
         .getAuthTag()
-        .toString(
-          'base64'
-        ),
+        .toString('base64'),
   };
 }
 
-export function decryptCredentialEmailJob(
-  job
-) {
+export function decryptCredentialEmailJob(job) {
   const decipher =
     crypto.createDecipheriv(
       'aes-256-gcm',
@@ -102,34 +85,14 @@ export function decryptCredentialEmailJob(
     ]);
 
   return JSON.parse(
-    decrypted.toString(
-      'utf8'
-    )
+    decrypted.toString('utf8')
   );
 }
 
-function qstashBaseUrls() {
-  const configured =
-    String(
-      process.env.QSTASH_URL ||
-      ''
-    )
-      .trim()
-      .replace(
-        /\/+$/,
-        ''
-      );
-
-  return Array.from(
-    new Set(
-      [
-        configured,
-        'https://qstash.upstash.io',
-      ].filter(Boolean)
-    )
-  );
-}
-
+/*
+ * Kept for backward compatibility with the existing QStash controller/routes.
+ * New Smart CSV imports no longer depend on this URL for credential delivery.
+ */
 function backendBaseUrl() {
   const explicit =
     String(
@@ -137,10 +100,7 @@ function backendBaseUrl() {
       ''
     )
       .trim()
-      .replace(
-        /\/+$/,
-        ''
-      );
+      .replace(/\/+$/, '');
 
   if (explicit) {
     return explicit;
@@ -151,36 +111,16 @@ function backendBaseUrl() {
     process.env.VERCEL_URL;
 
   if (vercelHost) {
-    return `https://${String(vercelHost).replace(/^https?:\/\//, '').replace(/\/+$/, '')}`;
+    return `https://${String(vercelHost)
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '')}`;
   }
 
-  throw new Error(
-    'BACKEND_PUBLIC_URL is required outside Vercel.'
-  );
+  return 'http://localhost:5000';
 }
 
 export function credentialEmailDestinationUrl() {
   return `${backendBaseUrl()}/api/internal/qstash/credential-email`;
-}
-
-function requiredQstashEnv() {
-  const missing =
-    [
-      'QSTASH_TOKEN',
-      'QSTASH_CURRENT_SIGNING_KEY',
-      'QSTASH_NEXT_SIGNING_KEY',
-    ].filter(
-      (key) =>
-        !process.env[key]
-    );
-
-  if (
-    missing.length
-  ) {
-    throw new Error(
-      `Missing QStash environment variables: ${missing.join(', ')}`
-    );
-  }
 }
 
 export async function createCredentialEmailJobs({
@@ -188,34 +128,29 @@ export async function createCredentialEmailJobs({
   session,
 }) {
   if (
-    !Array.isArray(
-      items
-    ) ||
-    items.length ===
-      0
+    !Array.isArray(items) ||
+    items.length === 0
   ) {
     return [];
   }
 
   const docs =
-    items.map(
-      (item) => ({
-        userId:
-          item.userId,
-        ...encryptPayload({
-          to:
-            item.to,
-          fullName:
-            item.fullName,
-          roleLabel:
-            item.roleLabel,
-          temporaryPassword:
-            item.temporaryPassword,
-        }),
-        status:
-          'ready',
-      })
-    );
+    items.map((item) => ({
+      userId:
+        item.userId,
+      ...encryptPayload({
+        to:
+          item.to,
+        fullName:
+          item.fullName,
+        roleLabel:
+          item.roleLabel,
+        temporaryPassword:
+          item.temporaryPassword,
+      }),
+      status:
+        'ready',
+    }));
 
   return CredentialEmailJob.insertMany(
     docs,
@@ -225,410 +160,207 @@ export async function createCredentialEmailJobs({
   );
 }
 
-async function publishJob(
-  job,
-  delaySeconds
-) {
-  requiredQstashEnv();
-
-  const destination =
-    credentialEmailDestinationUrl();
-
-  const failures =
-    [];
-
-  for (
-    const baseUrl of
-    qstashBaseUrls()
-  ) {
-    const publishUrl =
-      `${baseUrl}/v2/publish/${destination}`;
-
-    try {
-      console.info(
-        '[QStash] publish attempt',
-        {
-          baseUrl,
-          destination,
-          delaySeconds,
-          jobId:
-            String(
-              job._id
-            ),
-        }
-      );
-
-      const response =
-        await fetch(
-          publishUrl,
-          {
-            method:
-              'POST',
-
-            /*
-             * A broken regional endpoint must not hold the import/recovery
-             * request for a long time. If it fails, the official global
-             * QStash endpoint is tried automatically.
-             */
-            signal:
-              AbortSignal.timeout(
-                8000
-              ),
-
-            headers: {
-              Authorization:
-                `Bearer ${process.env.QSTASH_TOKEN}`,
-              'Content-Type':
-                'application/json',
-              'Upstash-Delay':
-                `${Math.max(0, delaySeconds)}s`,
-              'Upstash-Deduplication-Id':
-                `credential-email-${job._id}`,
-            },
-            body:
-              JSON.stringify({
-                jobId:
-                  String(
-                    job._id
-                  ),
-              }),
-          }
-        );
-
-      let payload =
-        null;
-
-      try {
-        payload =
-          await response.json();
-      } catch {
-        payload =
-          null;
-      }
-
-      if (
-        !response.ok
-      ) {
-        throw new Error(
-          payload?.error ||
-          payload?.message ||
-          `HTTP ${response.status}`
-        );
-      }
-
-      console.info(
-        '[QStash] publish success',
-        {
-          baseUrl,
-          status:
-            response.status,
-          jobId:
-            String(
-              job._id
-            ),
-          messageId:
-            String(
-              payload?.messageId ||
-              ''
-            ),
-        }
-      );
-
-      return payload;
-    } catch (error) {
-      const failureMessage =
-        error instanceof Error
-          ? error.message
-          : String(
-              error
-            );
-
-      console.error(
-        '[QStash] publish failed',
-        {
-          baseUrl,
-          destination,
-          delaySeconds,
-          jobId:
-            String(
-              job._id
-            ),
-          error:
-            failureMessage,
-        }
-      );
-
-      failures.push(
-        `${baseUrl}: ${failureMessage}`
-      );
-    }
-  }
-
-  throw new Error(
-    `QStash publish failed after automatic fallback. ${failures.join(' | ')}`
-  );
-}
-
-
-export async function scheduleCredentialEmailJobs(
-  jobIds
-) {
+/*
+ * DIRECT GMAIL MODE
+ *
+ * The Smart CSV controller already calls this function only AFTER the MongoDB
+ * import transaction has committed. Instead of publishing to QStash, send the
+ * temporary-password email immediately through the existing Nodemailer/Gmail
+ * SMTP service.
+ *
+ * Email failure never rolls back the employee import. Failed jobs keep their
+ * encrypted payload and are marked schedule_failed for inspection.
+ */
+export async function scheduleCredentialEmailJobs(jobIds) {
   if (
-    !Array.isArray(
-      jobIds
-    ) ||
-    jobIds.length ===
-      0
+    !Array.isArray(jobIds) ||
+    jobIds.length === 0
   ) {
     return {
-      scheduled:
-        0,
-      failed:
-        0,
+      scheduled: 0,
+      failed: 0,
+      errors: [],
     };
   }
 
   const jobs =
     await CredentialEmailJob.find({
       _id: {
-        $in:
-          jobIds,
+        $in: jobIds,
       },
       status: {
         $in: [
           'ready',
           'schedule_failed',
+          'scheduled',
         ],
       },
     }).sort({
-      createdAt:
-        1,
+      createdAt: 1,
     });
 
-  if (
-    jobs.length ===
-      0
-  ) {
-    return {
-      scheduled:
-        0,
-      failed:
-        0,
-    };
-  }
+  let sent = 0;
+  let failed = 0;
+  const errors = [];
 
-  /*
-   * Keep one continuous 30-second lane per tenant.
-   *
-   * This also fixes retries: a failed job never jumps back to delay 0 while
-   * another credential email is already scheduled in the future.
-   */
-  const latestScheduled =
-    await CredentialEmailJob.findOne({
-      _id: {
-        $nin:
-          jobs.map(
-            (job) =>
-              job._id
-          ),
-      },
-      status: {
-        $in: [
-          'scheduled',
-          'processing',
-        ],
-      },
-      scheduledFor: {
-        $ne:
-          null,
-      },
-    })
-      .sort({
-        scheduledFor:
-          -1,
-      })
-      .select(
-        'scheduledFor'
-      )
-      .lean();
-
-  const now =
-    Date.now();
-
-  let nextSlot =
-    now;
-
-  if (
-    latestScheduled
-      ?.scheduledFor
-  ) {
-    nextSlot =
-      Math.max(
-        nextSlot,
-        new Date(
-          latestScheduled.scheduledFor
-        ).getTime() +
-          THIRTY_SECONDS
-      );
-  }
-
-  let scheduled =
-    0;
-
-  let failed =
-    0;
-
-  const errors =
-    [];
-
-  for (
-    const job of
-    jobs
-  ) {
-    const scheduledFor =
-      new Date(
-        nextSlot
-      );
-
-    const delaySeconds =
-      Math.max(
-        0,
-        Math.ceil(
-          (
-            scheduledFor.getTime() -
-            Date.now()
-          ) /
-            1000
-        )
-      );
-
+  for (const job of jobs) {
     try {
-      const result =
-        await publishJob(
-          job,
-          delaySeconds
-        );
-
       job.status =
-        'scheduled';
-
-      job.scheduledFor =
-        scheduledFor;
-
-      job.qstashMessageId =
-        String(
-          result?.messageId ||
-          ''
-        );
-
+        'processing';
+      job.processingStartedAt =
+        new Date();
       job.scheduleError =
         '';
 
       await job.save();
 
-      scheduled +=
-        1;
+      const payload =
+        decryptCredentialEmailJob(job);
 
-      nextSlot =
-        scheduledFor.getTime() +
-        THIRTY_SECONDS;
+      console.info(
+        '[Smart CSV Email] direct Gmail send attempt',
+        {
+          jobId:
+            String(job._id),
+          to:
+            payload.to,
+        }
+      );
+
+      const ok =
+        await sendTemporaryAccountEmail(
+          payload
+        );
+
+      if (!ok) {
+        throw new Error(
+          'Gmail SMTP returned an unsuccessful result.'
+        );
+      }
+
+      /*
+       * Keep a sent tombstone only. Remove the encrypted temporary-password
+       * payload immediately after successful delivery.
+       */
+      await CredentialEmailJob.updateOne(
+        {
+          _id: job._id,
+        },
+        {
+          $set: {
+            status:
+              'sent',
+            sentAt:
+              new Date(),
+            processingStartedAt:
+              null,
+            scheduledFor:
+              null,
+            qstashMessageId:
+              '',
+            scheduleError:
+              '',
+          },
+          $unset: {
+            encryptedPayload:
+              1,
+            iv:
+              1,
+            authTag:
+              1,
+          },
+        }
+      );
+
+      console.info(
+        '[Smart CSV Email] direct Gmail send success',
+        {
+          jobId:
+            String(job._id),
+          to:
+            payload.to,
+        }
+      );
+
+      sent += 1;
     } catch (error) {
-      job.status =
-        'schedule_failed';
-
-      job.scheduledFor =
-        null;
-
-      const errorMessage =
+      const message =
         (
           error instanceof Error
             ? error.message
-            : String(
-                error
-              )
-        ).slice(
-          0,
-          1000
-        );
+            : String(error)
+        ).slice(0, 1000);
 
-      job.scheduleError =
-        errorMessage;
+      await CredentialEmailJob.updateOne(
+        {
+          _id: job._id,
+        },
+        {
+          $set: {
+            status:
+              'schedule_failed',
+            processingStartedAt:
+              null,
+            scheduledFor:
+              null,
+            qstashMessageId:
+              '',
+            scheduleError:
+              message,
+          },
+        }
+      );
 
-      await job.save();
+      console.error(
+        '[Smart CSV Email] direct Gmail send failed',
+        {
+          jobId:
+            String(job._id),
+          error:
+            message,
+        }
+      );
 
       errors.push({
         jobId:
-          String(
-            job._id
-          ),
-        message:
-          errorMessage,
+          String(job._id),
+        message,
       });
 
-      failed +=
-        1;
-
-      /*
-       * A failed publish did not reserve a real QStash slot, so the next
-       * successful job may use the same slot without breaking send spacing.
-       */
+      failed += 1;
     }
   }
 
+  /*
+   * Keep the existing controller response contract:
+   * "scheduled" now means successfully SENT directly by Gmail.
+   */
   return {
-    scheduled,
+    scheduled:
+      sent,
     failed,
     errors,
   };
 }
 
+/*
+ * IMPORTANT SAFETY:
+ * Old pending QStash jobs are deliberately NOT auto-sent.
+ *
+ * SmartCsvImportEnhancer calls /retry-emails automatically on page load.
+ * Sending every historical pending job here could email old test/client
+ * accounts unexpectedly. Fresh CSV imports are already delivered directly
+ * because commitSmartCsv passes only their newly-created job IDs into
+ * scheduleCredentialEmailJobs().
+ */
 export async function retryPendingCredentialEmailJobs() {
   console.info(
-    '[QStash] pending credential retry started'
+    '[Smart CSV Email] automatic historical retry skipped in direct Gmail mode'
   );
 
-  const jobs =
-    await CredentialEmailJob.find({
-      status: {
-        $in: [
-          'ready',
-          'schedule_failed',
-        ],
-      },
-    })
-      .select(
-        '_id'
-      )
-      .sort({
-        createdAt:
-          1,
-      });
-
-  console.info(
-    '[QStash] pending credential jobs found',
-    {
-      count:
-        jobs.length,
-    }
-  );
-
-  const result =
-    await scheduleCredentialEmailJobs(
-      jobs.map(
-        (job) =>
-          job._id
-      )
-    );
-
-  console.info(
-    '[QStash] pending credential retry finished',
-    {
-      scheduled:
-        result.scheduled,
-      failed:
-        result.failed,
-    }
-  );
-
-  return result;
+  return {
+    scheduled: 0,
+    failed: 0,
+    errors: [],
+  };
 }
