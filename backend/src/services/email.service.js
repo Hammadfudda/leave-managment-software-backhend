@@ -1,4 +1,4 @@
-import nodemailer from "nodemailer";
+﻿import nodemailer from "nodemailer";
 
 const smtpReady =
   process.env.SMTP_HOST &&
@@ -69,6 +69,24 @@ const transporter = smtpReady
     })
   : null;
 
+
+function getSenderAddress() {
+  const configuredFrom =
+    String(
+      process.env.EMAIL_FROM ||
+      process.env.SMTP_USER ||
+      ""
+    ).trim();
+
+  const angleBracketMatch =
+    configuredFrom.match(/<([^>]+)>/);
+
+  return (
+    angleBracketMatch?.[1]?.trim() ||
+    configuredFrom
+  );
+}
+
 /**
  * A failed email must NEVER roll back the action that triggered it.
  * Returns true on success and false on failure.
@@ -81,7 +99,7 @@ export async function sendEmail({
   try {
     if (!transporter) {
       console.warn(
-        "SMTP configuration missing — skipping email:",
+        "SMTP configuration missing â€” skipping email:",
         subject,
         "->",
         to,
@@ -91,7 +109,10 @@ export async function sendEmail({
     }
 
     await transporter.sendMail({
-      from: process.env.EMAIL_FROM,
+      from: {
+        name: "Nedd Consultant",
+        address: getSenderAddress(),
+      },
       to,
       subject,
       html,
@@ -139,7 +160,7 @@ export function layout(title, body) {
         color:#888;
       "
     >
-      Leave Management System — Nedd Consultant
+      Nedd Consultant
     </p>
   </div>
   `;
@@ -159,8 +180,8 @@ export const templates = {
         <p>Hi ${user.fullName},</p>
 
         <p>
-          An account has been created for you on the
-          Leave Management System.
+          An account has been created for you on
+          Nedd Consultant.
         </p>
 
         <p>
@@ -282,7 +303,7 @@ export const templates = {
             ${new Date(
               request.startDate,
             ).toDateString()}
-            –
+            â€“
             ${new Date(
               request.endDate,
             ).toDateString()},
