@@ -1,0 +1,6 @@
+import crypto from 'crypto';
+import { layout, sendEmail } from './email.service.js';
+const PORTAL_URL=(process.env.PUBLIC_APP_URL||'https://leave-managment-software.vercel.app').replace(/\/+$/,'');
+const esc=v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');
+export function generateTemporaryPassword(){return `T!7a${crypto.randomBytes(9).toString('base64url').slice(0,12)}`;}
+export async function sendTemporaryAccountEmail({to,fullName,roleLabel,temporaryPassword,companyName}){const n=esc(fullName),r=esc(roleLabel),c=esc(companyName||''),e=esc(to),p=esc(temporaryPassword);return sendEmail({to,subject:'Your Leave Management account is ready',html:layout('Your account is ready',`<p>Hi ${n},</p><p>Your ${r} account${companyName?` for <strong>${c}</strong>`:''} has been created on the Leave Management System.</p><p><strong>Login URL:</strong> <a href="${PORTAL_URL}">${PORTAL_URL}</a><br/><strong>Email:</strong> ${e}<br/><strong>Temporary Password:</strong> ${p}</p><p style="font-weight:600;color:#b45309;">Once you log in, you have to change your password.</p><p>After you change it, your new password is private to you.</p>`) });}
