@@ -6,6 +6,7 @@ import policyRoutes from './policy.routes.js';
 import teamRoutes from './team.routes.js';
 import notificationRoutes from './notification.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
+import superAdminRoutes from './super-admin.routes.js';
 import {
   gradeRoutes,
   departmentRoutes,
@@ -32,5 +33,5 @@ router.use('/dashboard', dashboardRoutes);
 router.use('/reports', reportRoutes);
 router.use('/calendar', calendarRoutes);
 router.use('/audit-logs', auditRoutes);
-
+router.use('/super-admin', superAdminRoutes);
 export default router;
