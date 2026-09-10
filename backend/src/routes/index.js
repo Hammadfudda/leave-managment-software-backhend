@@ -6,7 +6,7 @@ import policyRoutes from './policy.routes.js';
 import teamRoutes from './team.routes.js';
 import notificationRoutes from './notification.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
-import superAdminRoutes from './super-admin.routes.js';
+import superAdminRoutes from './superAdmin.routes.js';
 import {
   gradeRoutes,
   departmentRoutes,
