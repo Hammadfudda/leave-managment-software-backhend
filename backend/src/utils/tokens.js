@@ -38,5 +38,10 @@ export function sanitizeUser(user) {
   delete u.failedLoginAttempts;
   delete u.lockedUntil;
   delete u.__v;
+  // CNIC / nationalId are identity credentials and must not be returned by
+  // general employee/profile APIs. Keep them available only to explicitly
+  // authorized server-side workflows such as the employee CSV export.
+  delete u.cnic;
+  delete u.nationalId;
   return u;
 }
