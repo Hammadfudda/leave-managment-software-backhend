@@ -295,7 +295,7 @@ export const deleteClientOrganization = asyncHandler(async (req, res) => {
   o.scheduledPurgeAt = new Date(now.getTime() + RESTORE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   o.deletedBy = req.currentSuperAdmin._id;
   await o.save();
-  await User.updateMany({ organizationId: o._id }, { $set: { refreshTokenHash: null } });
+  await User.updateMany({ organizationId: o._id }, { $set: { refreshTokenHash: null, sessionRevokedAt: new Date() } });
   return res.json({
     success: true,
     message: `Client "${o.name}" moved to Recently Deleted. All access was revoked. It will be permanently deleted after ${RESTORE_WINDOW_DAYS} days unless restored.`,
@@ -313,6 +313,10 @@ export const restoreClientOrganization = asyncHandler(async (req, res) => {
   o.scheduledPurgeAt = null;
   o.deletedBy = null;
   await o.save();
+  await User.updateMany(
+    { organizationId: o._id },
+    { $set: { refreshTokenHash: null, sessionRevokedAt: new Date() } }
+  );
   return res.json({
     success: true,
     message: `Client "${o.name}" restored successfully. Client users must sign in again because previous sessions were revoked.`,
