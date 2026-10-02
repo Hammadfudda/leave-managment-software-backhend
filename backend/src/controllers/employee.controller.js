@@ -240,12 +240,7 @@ export const resetEmployeePassword = asyncHandler(async (req, res) => {
   return res.json({
     success: true,
     message: 'A new temporary password was generated and emailed to the user.',
-    credentials: {
-      email: user.email,
-      password: temporaryPassword,
-      temporaryPassword: true,
-      emailSent: true,
-    },
+    emailSent: true,
   });
 });
 
