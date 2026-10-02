@@ -205,6 +205,7 @@ export const changePassword = asyncHandler(async (req, res) => {
 
   user.passwordHash = await bcrypt.hash(newPassword, 12);
   user.passwordChangedFromDefault = true;
+  user.passwordChangedAt = new Date();
   user.mustChangePassword = false;
   user.refreshTokenHash = null;
   user.failedLoginAttempts = 0;
@@ -233,6 +234,7 @@ export const resetPassword = asyncHandler(async (req, res) => {
 
   user.passwordHash = await bcrypt.hash(password, 10);
   user.passwordChangedFromDefault = true;
+  user.passwordChangedAt = new Date();
   user.mustChangePassword = false;
   user.passwordResetTokenHash = null;
   user.passwordResetExpires = null;
