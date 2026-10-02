@@ -319,11 +319,3 @@ export const restoreClientOrganization = asyncHandler(async (req, res) => {
   });
 });
 
-export const purgeClientOrganizationNow = asyncHandler(async (req, res) => {
-  const o = await Organization.findById(req.params.id);
-  if (!o) throw new NotFoundError('Organization not found.');
-  if (o.status !== 'pending_deletion') throw new ValidationError('Only clients in Recently Deleted can be permanently deleted.');
-  if (o.scheduledPurgeAt && o.scheduledPurgeAt.getTime() > Date.now()) throw new ValidationError('Permanent deletion is locked until the 10-day restore window expires.');
-  const result = await purgeOrganizationData(o._id);
-  return res.json({ success: true, message: `Client "${result.organizationName}" and all tenant data were permanently deleted.`, data: result });
-});
