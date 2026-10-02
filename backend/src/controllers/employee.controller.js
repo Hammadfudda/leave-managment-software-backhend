@@ -22,9 +22,16 @@ import { emailAdmins } from '../services/notification.service.js';
 
 const RESTORE_WINDOW_DAYS = 7;
 
+function requireOrganizationId(currentUser) {
+  if (!currentUser?.organizationId) {
+    throw new ValidationError('Your account is not assigned to an organization.');
+  }
+  return currentUser.organizationId;
+}
+
 /** Spec Part 10.3 — role-scoping is applied BEFORE query filters, always. */
 function buildEmployeeFilter(query, currentUser) {
-  const filter = {};
+  const filter = { organizationId: requireOrganizationId(currentUser) };
 
   // Role scoping first.
   if (currentUser.role === 'manager') {
@@ -67,7 +74,8 @@ export const getMe = asyncHandler(async (req, res) => {
 });
 
 export const getEmployee = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.id).populate('gradeId');
+  const organizationId = requireOrganizationId(req.currentUser);
+  const user = await User.findOne({ _id: req.params.id, organizationId }).populate('gradeId');
   if (!user) throw new NotFoundError();
 
   // An employee may only read their own record.
@@ -99,7 +107,9 @@ export const createEmployee = asyncHandler(async (req, res) => {
     );
   }
 
+  const organizationId = requireOrganizationId(req.currentUser);
   const duplicate = await User.findOne({
+    organizationId,
     $or: [
       { email: String(body.email).toLowerCase() },
       { nationalId: body.cnic },
@@ -112,6 +122,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
   if (!grade) throw new ValidationError('Unknown grade.');
 
   const user = await User.create({
+    organizationId,
     fullName: body.fullName,
     email: String(body.email).toLowerCase(),
     nationalId: body.cnic,
@@ -153,7 +164,8 @@ export const createEmployee = asyncHandler(async (req, res) => {
 });
 
 export const updateEmployee = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.id);
+  const organizationId = requireOrganizationId(req.currentUser);
+  const user = await User.findOne({ _id: req.params.id, organizationId });
   if (!user) throw new NotFoundError();
 
   const editable = [
@@ -218,7 +230,8 @@ export const updateEmployee = asyncHandler(async (req, res) => {
  * LeaveRequest history is kept.
  */
 export const removeEmployee = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.id);
+  const organizationId = requireOrganizationId(req.currentUser);
+  const user = await User.findOne({ _id: req.params.id, organizationId });
   if (!user) throw new NotFoundError();
   if (String(user._id) === String(req.currentUser._id)) {
     throw new ValidationError('You cannot remove your own account.');
@@ -268,7 +281,8 @@ export const removeEmployee = asyncHandler(async (req, res) => {
 });
 
 export const restoreEmployee = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.id);
+  const organizationId = requireOrganizationId(req.currentUser);
+  const user = await User.findOne({ _id: req.params.id, organizationId });
   if (!user) throw new NotFoundError();
   if (user.status !== 'pending_deletion') {
     throw new ValidationError('This employee is not pending deletion.');
@@ -301,7 +315,7 @@ export const restoreEmployee = asyncHandler(async (req, res) => {
 
 export const listRemovedEmployees = asyncHandler(async (req, res) => {
   const { page, limit, skip } = getPagination(req.query);
-  const filter = { status: 'pending_deletion' };
+  const filter = { status: 'pending_deletion', organizationId: requireOrganizationId(req.currentUser) };
 
   const [users, total] = await Promise.all([
     User.find(filter).populate('gradeId').sort({ scheduledPurgeAt: 1 }).skip(skip).limit(limit),
@@ -326,7 +340,7 @@ export const listRemovedEmployees = asyncHandler(async (req, res) => {
 
 /** Spec Part 10.1 — export includes leave balances, not just profile fields. */
 export const exportEmployeesCsv = asyncHandler(async (req, res) => {
-  const users = await User.find({}).populate('gradeId');
+  const users = await User.find({ organizationId: requireOrganizationId(req.currentUser) }).populate('gradeId');
   const leaveTypes = CORE_LEAVE_TYPES;
 
   const rows = await Promise.all(
@@ -426,6 +440,7 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
     }
 
     const newUser = await User.create({
+      organizationId,
       fullName: row.fullName,
       email: String(row.email).toLowerCase(),
       nationalId: row.cnic,
