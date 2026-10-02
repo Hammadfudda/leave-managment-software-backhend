@@ -20,6 +20,7 @@ import {
 } from '../services/balance.service.js';
 import { sendEmail, templates } from '../services/email.service.js';
 import { emailAdmins } from '../services/notification.service.js';
+import { generateTemporaryPassword, sendTemporaryAccountEmail } from '../services/temporaryPassword.service.js';
 
 const RESTORE_WINDOW_DAYS = 7;
 
@@ -176,6 +177,71 @@ export const createEmployee = asyncHandler(async (req, res) => {
   });
 
   res.status(201).json({ success: true, data: sanitizeUser(user) });
+});
+
+export const resetEmployeePassword = asyncHandler(async (req, res) => {
+  const organizationId = requireOrganizationId(req.currentUser);
+  const user = await User.findOne({
+    _id: req.params.id,
+    organizationId,
+    role: { $in: ['manager', 'employee'] },
+  });
+
+  if (!user) throw new NotFoundError('Employee or Manager not found.');
+
+  const temporaryPassword = generateTemporaryPassword();
+  const previous = {
+    passwordHash: user.passwordHash,
+    passwordChangedFromDefault: user.passwordChangedFromDefault,
+    mustChangePassword: user.mustChangePassword,
+    refreshTokenHash: user.refreshTokenHash,
+  };
+
+  user.passwordHash = await bcrypt.hash(temporaryPassword, 12);
+  user.passwordChangedFromDefault = false;
+  user.mustChangePassword = true;
+  user.refreshTokenHash = null;
+  user.failedLoginAttempts = 0;
+  user.lockedUntil = null;
+  await user.save();
+
+  const emailSent = await sendTemporaryAccountEmail({
+    to: user.email,
+    fullName: user.fullName,
+    roleLabel: user.role === 'manager' ? 'Manager' : 'Employee',
+    temporaryPassword,
+  });
+
+  if (!emailSent) {
+    user.passwordHash = previous.passwordHash;
+    user.passwordChangedFromDefault = previous.passwordChangedFromDefault;
+    user.mustChangePassword = previous.mustChangePassword;
+    user.refreshTokenHash = previous.refreshTokenHash;
+    await user.save();
+    throw new ValidationError('Temporary password email could not be sent. The password was left unchanged.');
+  }
+
+  await audit({
+    actorId: req.currentUser._id,
+    actorName: req.currentUser.fullName,
+    action: 'RESET_EMPLOYEE_PASSWORD',
+    targetType: 'User',
+    targetId: user._id,
+    affectedPerson: user.fullName,
+    department: user.department,
+    details: 'Generated a new temporary password for ' + user.fullName + ' (' + user.employeeId + ').',
+  });
+
+  return res.json({
+    success: true,
+    message: 'A new temporary password was generated and emailed to the user.',
+    credentials: {
+      email: user.email,
+      password: temporaryPassword,
+      temporaryPassword: true,
+      emailSent: true,
+    },
+  });
 });
 
 export const updateEmployee = asyncHandler(async (req, res) => {
