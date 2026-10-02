@@ -40,6 +40,12 @@ export const loadUser = asyncHandler(async (req, res, next) => {
   if (!user || user.status !== 'active') {
     return res.status(401).json({ success: false, message: 'Not authenticated' });
   }
+  if (!user.organizationId) {
+    return res.status(401).json({
+      success: false,
+      message: 'Your account is not assigned to an organization.',
+    });
+  }
   if (user.organizationId) {
     const organization = await Organization.findById(user.organizationId).select('status').lean();
     if (!organization || organization.status !== 'active') {
