@@ -1,7 +1,6 @@
 import mongoose from 'mongoose';
 import Organization from '../models/Organization.js';
 import User from '../models/User.js';
-import FeedbackRequest from '../models/FeedbackRequest.js';
 import LeaveRequest from '../models/LeaveRequest.js';
 import LeaveBalance from '../models/LeaveBalance.js';
 import Notification from '../models/Notification.js';
