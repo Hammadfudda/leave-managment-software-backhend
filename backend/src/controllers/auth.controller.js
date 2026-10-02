@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import Organization from '../models/Organization.js';
 import LoginHistory from '../models/LoginHistory.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import {
@@ -27,6 +28,10 @@ export const login = asyncHandler(async (req, res) => {
   if (!user) return invalid();
   // This is what makes a removed employee's login stop immediately.
   if (user.status !== 'active') return invalid();
+  if (user.organizationId) {
+    const organization = await Organization.findById(user.organizationId).select('status').lean();
+    if (!organization || organization.status !== 'active') return invalid();
+  }
   if (user.lockedUntil && user.lockedUntil > Date.now()) {
     return res
       .status(423)
@@ -99,6 +104,15 @@ export const refresh = asyncHandler(async (req, res) => {
   if (!user || user.status !== 'active' || !user.refreshTokenHash) {
     return res.status(401).json({ success: false, message: 'Not authenticated' });
   }
+  if (user.organizationId) {
+    const organization = await Organization.findById(user.organizationId).select('status').lean();
+    if (!organization || organization.status !== 'active') {
+      user.refreshTokenHash = null;
+      await user.save();
+      return res.status(401).json({ success: false, message: 'Not authenticated' });
+    }
+  }
+
   const matches = await bcrypt.compare(token, user.refreshTokenHash);
   if (!matches) {
     // Token reuse / revoked session — drop every session for this user.
