@@ -50,6 +50,7 @@ export const updateOrganizationDetails = asyncHandler(async (req, res) => {
 
   const o = await Organization.findById(req.params.id);
   if (!o) throw new NotFoundError('Organization not found.');
+  if (o.status === 'pending_deletion') throw new ValidationError('Restore the client before editing its details.');
   if (!o.adminUserId) throw new NotFoundError('Client Admin was not found.');
 
   const a = await User.findById(o.adminUserId);
