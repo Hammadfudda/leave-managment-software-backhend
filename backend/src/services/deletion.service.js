@@ -13,18 +13,29 @@ export async function purgeEmployeeData(userId) {
   const user = await User.findById(userId);
   if (!user) return false;
 
+  const anonymousName = 'Former Employee';
   const userIdFilter = { $in: [user._id] };
 
+  // Preserve leave history and approval/audit records. The person's identity is
+  // anonymized instead of deleting historical documents.
   await Promise.all([
-    LeaveRequest.deleteMany({
-      employeeId: user._id,
-    }),
+    LeaveRequest.updateMany(
+      { employeeId: user._id },
+      {
+        $set: {
+          employeeName: anonymousName,
+          department: user.department || '',
+        },
+      }
+    ),
     LeaveRequest.updateMany(
       {
         $or: [
           { requiredApproverIds: userIdFilter },
           { approvedByIds: userIdFilter },
           { rejectedByIds: userIdFilter },
+          { 'approvalHistory.approverId': user._id },
+          { cancelledBy: user._id },
         ],
       },
       {
@@ -33,17 +44,36 @@ export async function purgeEmployeeData(userId) {
           approvedByIds: user._id,
           rejectedByIds: user._id,
         },
+        $set: {
+          'approvalHistory.$[history].approverName': anonymousName,
+          cancelledByName: anonymousName,
+        },
+      },
+      {
+        arrayFilters: [{ 'history.approverId': user._id }],
       }
     ),
     LeaveBalance.deleteMany({ employeeId: user._id }),
     Notification.deleteMany({ userId: user._id }),
     LoginHistory.deleteMany({ userId: user._id }),
-    AuditLog.deleteMany({
-      $or: [
-        { actorId: user._id },
-        { targetId: user._id },
-      ],
-    }),
+    AuditLog.updateMany(
+      {
+        $or: [
+          { actorId: user._id },
+          { targetId: user._id },
+        ],
+      },
+      {
+        $set: {
+          actorName: anonymousName,
+          affectedPerson: anonymousName,
+        },
+        $unset: {
+          actorId: '',
+          targetId: '',
+        },
+      }
+    ),
     User.deleteOne({ _id: user._id }),
   ]);
 
