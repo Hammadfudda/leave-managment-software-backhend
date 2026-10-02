@@ -8,7 +8,9 @@ import User from '../models/User.js';
  * earlier draft conflated the two and it was a real, shipped bug.
  */
 export async function getAvailableLeaveTypesForUser(user) {
-  const policies = await LeavePolicy.find({});
+  const policies = await LeavePolicy.find({
+    $or: [{ organizationId: user.organizationId }, { organizationId: null }],
+  });
   return policies
     .filter((p) => {
       if (p.approvalRouting?.grade && String(user.gradeId) !== p.approvalRouting.grade) return false;
@@ -44,8 +46,9 @@ export function checkApplicantScope(policy, user) {
 }
 
 /** Spec Part 6.2 — Cross-department approver eligibility. */
-export async function getEligibleApprovers(policyDepartmentFilter) {
+export async function getEligibleApprovers(policyDepartmentFilter, organizationId) {
   const candidates = await User.find({
+    organizationId,
     role: { $in: ['manager', 'admin'] },
     status: 'active',
   });
