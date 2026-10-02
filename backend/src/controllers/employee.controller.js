@@ -406,6 +406,8 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
     bom: true,
   });
 
+  const organizationId = requireOrganizationId(req.currentUser);
+
   const results = {
     created: 0,
     skipped: [],
@@ -419,6 +421,7 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
     }
 
     const exists = await User.findOne({
+      organizationId,
       $or: [{ email: String(row.email).toLowerCase() }, { nationalId: row.cnic }],
     });
     if (exists) {
