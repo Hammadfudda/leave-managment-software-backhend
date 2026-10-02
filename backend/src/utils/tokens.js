@@ -21,10 +21,13 @@ export function signRefreshToken(user) {
 }
 
 export function refreshCookieOptions() {
+  // Production must always use HTTPS for the refresh credential. Local HTTP
+  // development remains possible only when COOKIE_SECURE=false is explicitly set.
+  const secure = process.env.COOKIE_SECURE === 'false' ? false : true;
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    secure,
+    sameSite: 'strict',
     maxAge: REFRESH_COOKIE_MAX_AGE,
     path: '/',
   };
