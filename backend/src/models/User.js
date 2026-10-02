@@ -7,9 +7,9 @@ const userSchema = new Schema(
   {
     fullName: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    // CNIC — also the default login password
+    // National identity fields are retained for HR/export workflows only.
     nationalId: { type: String, required: true, unique: true },
-    passwordHash: { type: String, required: true }, // bcrypt(nationalId) at creation
+    passwordHash: { type: String, required: true }, // bcrypt(temporary or user-selected password)
     passwordChangedFromDefault: { type: Boolean, default: false },
     mustChangePassword: { type: Boolean, default: false },
     passwordChangedAt: { type: Date, default: null },
