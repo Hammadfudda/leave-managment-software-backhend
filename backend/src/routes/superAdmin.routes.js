@@ -16,6 +16,7 @@ router.patch('/organizations/:id/status', superAdmin.updateOrganizationStatus);
 router.patch('/organizations/:id/reset-admin-password', clientAccount.resetClientAdminToTemporaryPassword);
 router.patch('/organizations/:id', extras.updateOrganizationDetails);
 router.delete('/organizations/:id', extras.deleteClientOrganization);
+router.patch('/organizations/:id/restore', extras.restoreClientOrganization);
 router.get('/feedback', extras.listFeedbackRequests);
 router.patch('/feedback/:id', extras.updateFeedbackRequest);
 router.post('/broadcast', extras.broadcastAdminUpdate);
