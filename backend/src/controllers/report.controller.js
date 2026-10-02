@@ -8,11 +8,26 @@ import { asyncHandler } from '../utils/asyncHandler.js';
  * exactly as on every other list endpoint, so a manager can never widen their
  * view by hand-crafting query params.
  */
-function scopeFor(user) {
-  if (user.role === 'admin') return {};
-  if (user.role === 'manager') {
-    return { $or: [{ employeeId: user._id }, { requiredApproverIds: user._id }] };
+async function scopeFor(user) {
+  if (!user.organizationId) {
+    throw new Error('Your account is not assigned to an organization.');
   }
+
+  const organizationEmployeeIds = await User.distinct('_id', {
+    organizationId: user.organizationId,
+  });
+
+  if (user.role === 'admin') {
+    return { employeeId: { $in: organizationEmployeeIds } };
+  }
+
+  if (user.role === 'manager') {
+    return {
+      employeeId: { $in: organizationEmployeeIds },
+      $or: [{ employeeId: user._id }, { requiredApproverIds: user._id }],
+    };
+  }
+
   return { employeeId: user._id };
 }
 
@@ -37,7 +52,7 @@ function applyFilters(filter, query) {
 }
 
 export const summary = asyncHandler(async (req, res) => {
-  const filter = applyFilters({ ...scopeFor(req.currentUser) }, req.query);
+  const filter = applyFilters(await scopeFor(req.currentUser), req.query);
   const requests = await LeaveRequest.find(filter);
 
   const byStatus = { pending: 0, approved: 0, rejected: 0, cancelled: 0 };
@@ -54,10 +69,10 @@ export const summary = asyncHandler(async (req, res) => {
 
   const employeeFilter =
     req.currentUser.role === 'admin'
-      ? { status: 'active' }
+      ? { status: 'active', organizationId: req.currentUser.organizationId }
       : req.currentUser.role === 'manager'
-        ? { status: 'active', department: req.currentUser.department }
-        : { _id: req.currentUser._id };
+        ? { status: 'active', organizationId: req.currentUser.organizationId, department: req.currentUser.department }
+        : { _id: req.currentUser._id, organizationId: req.currentUser.organizationId };
 
   res.json({
     success: true,
