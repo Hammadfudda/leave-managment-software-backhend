@@ -109,16 +109,28 @@ function decorate(request, viewer) {
  *   Manager  → own requests + anything they are a required approver on
  *   Employee → own requests only
  */
-function scopeFor(user) {
-  if (user.role === 'admin') return {};
+async function scopeFor(user) {
+  if (!user?.organizationId) throw new ValidationError('Your account is not assigned to an organization.');
+
+  // LeaveRequest records are linked to their employee rather than trusting a
+  // client-supplied organizationId. Resolve the organization's user IDs first,
+  // which also keeps older leave records working after tenant isolation.
+  const orgEmployeeIds = await User.find({ organizationId: user.organizationId }).distinct('_id');
+
+  if (user.role === 'admin') return { employeeId: { $in: orgEmployeeIds } };
   if (user.role === 'manager') {
-    return { $or: [{ employeeId: user._id }, { requiredApproverIds: user._id }] };
+    return {
+      $and: [
+        { employeeId: { $in: orgEmployeeIds } },
+        { $or: [{ employeeId: user._id }, { requiredApproverIds: user._id }] },
+      ],
+    };
   }
   return { employeeId: user._id };
 }
 
 export const listLeaveRequests = asyncHandler(async (req, res) => {
-  const filter = { ...scopeFor(req.currentUser) };
+  const filter = { ...(await scopeFor(req.currentUser)) };
 
   if (req.query.status) filter.status = req.query.status;
   if (req.query.leaveType) filter.leaveType = req.query.leaveType;
@@ -158,6 +170,11 @@ export const listLeaveRequests = asyncHandler(async (req, res) => {
 export const getLeaveRequest = asyncHandler(async (req, res) => {
   const request = await LeaveRequest.findById(req.params.id);
   if (!request) throw new NotFoundError();
+
+  const owner = await User.findById(request.employeeId).select('organizationId');
+  if (!owner || String(owner.organizationId) !== String(req.currentUser.organizationId)) {
+    throw new NotFoundError();
+  }
 
   const isOwner = String(request.employeeId) === String(req.currentUser._id);
   const involved =
@@ -424,8 +441,11 @@ export const getBalance = asyncHandler(async (req, res) => {
   const isSelf = String(employeeId) === String(req.currentUser._id);
   if (!isSelf && req.currentUser.role === 'employee') throw new NotFoundError();
 
-  const employee = await User.findById(employeeId);
-  if (!employee) throw new NotFoundError();
+  const employee = await User.findById(employeeId).select('organizationId');
+  if (!employee || !req.currentUser.organizationId ||
+      String(employee.organizationId) !== String(req.currentUser.organizationId)) {
+    throw new NotFoundError();
+  }
 
   const balances = await getLeaveBalancesForUser(employeeId);
   res.json({ success: true, data: balances });
