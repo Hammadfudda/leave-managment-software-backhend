@@ -1,15 +1,10 @@
-import mongoose from 'mongoose';
 import Organization from '../models/Organization.js';
 import User from '../models/User.js';
 import FeedbackRequest from '../models/FeedbackRequest.js';
-import LeaveRequest from '../models/LeaveRequest.js';
-import LeaveBalance from '../models/LeaveBalance.js';
-import Notification from '../models/Notification.js';
-import LoginHistory from '../models/LoginHistory.js';
-import AuditLog from '../models/AuditLog.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ConflictError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { layout, sendEmail } from '../services/email.service.js';
+import { RESTORE_WINDOW_DAYS, purgeOrganizationData } from '../services/deletion.service.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const clean = (v) => String(v ?? '').trim();
@@ -292,62 +287,43 @@ export const broadcastAdminUpdate = asyncHandler(async (req, res) => {
 export const deleteClientOrganization = asyncHandler(async (req, res) => {
   const o = await Organization.findById(req.params.id);
   if (!o) throw new NotFoundError('Organization not found.');
-
-  const organizationId = o._id;
-  const tenantUserIds = await User.find({ organizationId }).distinct('_id');
-  const usersBeforeDelete = tenantUserIds.length;
-
-  const db = mongoose.connection.db;
-  if (!db) {
-    throw new ValidationError('Database connection is not ready.');
-  }
-
-  // Some legacy collections are keyed by User IDs instead of organizationId.
-  // Remove those records explicitly so deleting a tenant cannot leave behind
-  // historical requests, balances, notifications, login history or audit data.
-  const userIdFilter = { $in: tenantUserIds };
-  await Promise.all([
-    LeaveRequest.deleteMany({
-      $or: [
-        { employeeId: userIdFilter },
-        { requiredApproverIds: userIdFilter },
-        { approvedByIds: userIdFilter },
-        { rejectedByIds: userIdFilter },
-        { cancelledBy: userIdFilter },
-      ],
-    }),
-    LeaveBalance.deleteMany({ employeeId: userIdFilter }),
-    Notification.deleteMany({ userId: userIdFilter }),
-    LoginHistory.deleteMany({ userId: userIdFilter }),
-    AuditLog.deleteMany({ actorId: userIdFilter }),
-    User.deleteMany({ organizationId }),
-  ]);
-
-  const excluded = new Set(['organizations', 'superadmins']);
-  let deletedTenantRecords = 0;
-
-  for (const item of await db.listCollections({}, { nameOnly: true }).toArray()) {
-    if (
-      excluded.has(item.name) ||
-      item.name.startsWith('system.')
-    ) {
-      continue;
-    }
-
-    const r = await db.collection(item.name).deleteMany({ organizationId });
-    deletedTenantRecords += r.deletedCount || 0;
-  }
-
-  await Organization.deleteOne({ _id: organizationId });
-
+  if (o.status === 'pending_deletion') throw new ValidationError('This client is already in Recently Deleted.');
+  const now = new Date();
+  o.status = 'pending_deletion';
+  o.deactivatedAt = now;
+  o.scheduledPurgeAt = new Date(now.getTime() + RESTORE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  o.deletedBy = req.currentSuperAdmin._id;
+  await o.save();
+  await User.updateMany({ organizationId: o._id }, { $set: { refreshTokenHash: null } });
   return res.json({
     success: true,
-    message: `Client "${o.name}" permanently deleted. ${usersBeforeDelete} user account(s) and ${deletedTenantRecords} tenant record(s) were removed.`,
-    data: {
-      organizationId: String(organizationId),
-      organizationName: o.name,
-      deletedUsers: usersBeforeDelete,
-      deletedTenantRecords,
-    },
+    message: `Client "${o.name}" moved to Recently Deleted. All access was revoked. It will be permanently deleted after ${RESTORE_WINDOW_DAYS} days unless restored.`,
+    data: { organizationId: String(o._id), organizationName: o.name, scheduledPurgeAt: o.scheduledPurgeAt },
   });
+});
+
+export const restoreClientOrganization = asyncHandler(async (req, res) => {
+  const o = await Organization.findById(req.params.id);
+  if (!o) throw new NotFoundError('Organization not found.');
+  if (o.status !== 'pending_deletion') throw new ValidationError('This client is not in Recently Deleted.');
+  if (o.scheduledPurgeAt && o.scheduledPurgeAt.getTime() <= Date.now()) throw new ValidationError('The 10-day restore window has expired. This client is awaiting permanent deletion.');
+  o.status = 'active';
+  o.deactivatedAt = null;
+  o.scheduledPurgeAt = null;
+  o.deletedBy = null;
+  await o.save();
+  return res.json({
+    success: true,
+    message: `Client "${o.name}" restored successfully. Client users must sign in again because previous sessions were revoked.`,
+    data: { organizationId: String(o._id), organizationName: o.name, status: o.status },
+  });
+});
+
+export const purgeClientOrganizationNow = asyncHandler(async (req, res) => {
+  const o = await Organization.findById(req.params.id);
+  if (!o) throw new NotFoundError('Organization not found.');
+  if (o.status !== 'pending_deletion') throw new ValidationError('Only clients in Recently Deleted can be permanently deleted.');
+  if (o.scheduledPurgeAt && o.scheduledPurgeAt.getTime() > Date.now()) throw new ValidationError('Permanent deletion is locked until the 10-day restore window expires.');
+  const result = await purgeOrganizationData(o._id);
+  return res.json({ success: true, message: `Client "${result.organizationName}" and all tenant data were permanently deleted.`, data: result });
 });
