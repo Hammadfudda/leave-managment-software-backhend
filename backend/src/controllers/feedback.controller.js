@@ -142,6 +142,7 @@ export const createFeedback =
 
       const feedback =
         await FeedbackRequest.create({
+          organizationId: user.organizationId,
           submittedById:
             user._id,
 
@@ -241,11 +242,13 @@ export const createFeedback =
 export const listMyFeedback =
   asyncHandler(
     async (
-      _req,
+      req,
       res
     ) => {
       const rows =
-        await FeedbackRequest.find({})
+        await FeedbackRequest.find({
+          organizationId: req.currentUser.organizationId,
+        })
           .sort({
             createdAt:
               -1,
