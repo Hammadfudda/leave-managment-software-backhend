@@ -24,6 +24,7 @@ const organizationSchema = new Schema(
       enum: [
         'active',
         'suspended',
+        'pending_deletion',
       ],
       default: 'active',
       index: true,
@@ -32,6 +33,23 @@ const organizationSchema = new Schema(
     adminUserId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
+      default: null,
+    },
+
+    deactivatedAt: {
+      type: Date,
+      default: null,
+    },
+
+    scheduledPurgeAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+
+    deletedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'SuperAdmin',
       default: null,
     },
 
