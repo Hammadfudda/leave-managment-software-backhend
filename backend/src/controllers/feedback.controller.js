@@ -16,7 +16,7 @@ import {
 
 const OWNER_EMAIL =
   process.env.SUPER_ADMIN_FEEDBACK_EMAIL ||
-  'hammadmemon561@gmail.com';
+  'hammaddanish7@gmail.com';
 
 function clean(value) {
   return String(
