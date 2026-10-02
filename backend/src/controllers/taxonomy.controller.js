@@ -17,6 +17,15 @@ import { syncQuotasToGrade } from '../services/balance.service.js';
  * still referenced by a User is never deleted; doing so would leave employees
  * pointing at a missing grade/department and break their balances silently.
  */
+function requireOrganizationId(currentUser) {
+  if (!currentUser?.organizationId) throw new ValidationError('Your account is not assigned to an organization.');
+  return currentUser.organizationId;
+}
+
+function ownedOrSharedFilter(organizationId) {
+  return { $or: [{ organizationId }, { organizationId: null }] };
+}
+
 function crudFactory({ Model, label, actions, writableFields, inUseCheck, afterUpdate }) {
   const pick = (body) => {
     const out = {};
@@ -28,7 +37,8 @@ function crudFactory({ Model, label, actions, writableFields, inUseCheck, afterU
 
   return {
     list: asyncHandler(async (req, res) => {
-      const items = await Model.find({}).sort({ name: 1 });
+      const organizationId = requireOrganizationId(req.currentUser);
+      const items = await Model.find(ownedOrSharedFilter(organizationId)).sort({ name: 1 });
       res.json({ success: true, data: items });
     }),
 
@@ -36,10 +46,11 @@ function crudFactory({ Model, label, actions, writableFields, inUseCheck, afterU
       const payload = pick(req.body);
       if (!payload.name) throw new ValidationError(`${label} name is required.`);
 
+      const organizationId = requireOrganizationId(req.currentUser);
       const existing = await Model.findOne({ name: payload.name });
       if (existing) throw new ConflictError(`A ${label.toLowerCase()} with that name already exists.`);
 
-      const item = await Model.create(payload);
+      const item = await Model.create({ ...payload, organizationId });
       await audit({
         actorId: req.currentUser._id,
         actorName: req.currentUser.fullName,
@@ -52,7 +63,8 @@ function crudFactory({ Model, label, actions, writableFields, inUseCheck, afterU
     }),
 
     update: asyncHandler(async (req, res) => {
-      const item = await Model.findById(req.params.id);
+      const organizationId = requireOrganizationId(req.currentUser);
+      const item = await Model.findOne({ _id: req.params.id, organizationId });
       if (!item) throw new NotFoundError();
 
       const payload = pick(req.body);
@@ -79,10 +91,11 @@ function crudFactory({ Model, label, actions, writableFields, inUseCheck, afterU
     }),
 
     remove: asyncHandler(async (req, res) => {
-      const item = await Model.findById(req.params.id);
+      const organizationId = requireOrganizationId(req.currentUser);
+      const item = await Model.findOne({ _id: req.params.id, organizationId });
       if (!item) throw new NotFoundError();
 
-      const inUse = await inUseCheck(item);
+      const inUse = await inUseCheck(item, organizationId);
       if (inUse > 0) {
         throw new ConflictError(
           `This ${label.toLowerCase()} is assigned to ${inUse} employee(s) and cannot be deleted.`
@@ -116,11 +129,11 @@ export const grades = crudFactory({
     'maxCarryForwardDays',
     'description',
   ],
-  inUseCheck: (grade) => User.countDocuments({ gradeId: grade._id, status: { $ne: 'inactive' } }),
+  inUseCheck: (grade, organizationId) => User.countDocuments({ gradeId: grade._id, organizationId, status: { $ne: 'inactive' } }),
   // Editing a grade's quotas must flow through to everyone on it. `used` is
   // preserved, only `quota` moves, so nobody loses days they already took.
   afterUpdate: async (grade) => {
-    const holders = await User.find({ gradeId: grade._id }).select('_id');
+    const holders = await User.find({ gradeId: grade._id, organizationId: grade.organizationId }).select('_id');
     for (const holder of holders) {
       await syncQuotasToGrade(holder._id, grade);
     }
@@ -137,10 +150,10 @@ export const departments = crudFactory({
   },
   // Departments are stored on User by name, so a rename has to cascade.
   writableFields: ['name', 'saturdayOff'],
-  inUseCheck: (dept) => User.countDocuments({ department: dept.name, status: { $ne: 'inactive' } }),
+  inUseCheck: (dept, organizationId) => User.countDocuments({ department: dept.name, organizationId, status: { $ne: 'inactive' } }),
   afterUpdate: async (dept, previousName) => {
     if (previousName !== dept.name) {
-      await User.updateMany({ department: previousName }, { $set: { department: dept.name } });
+      await User.updateMany({ organizationId: dept.organizationId, department: previousName }, { $set: { department: dept.name } });
     }
   },
 });
@@ -154,10 +167,10 @@ export const designations = crudFactory({
     delete: 'DELETE_DESIGNATION',
   },
   writableFields: ['name'],
-  inUseCheck: (d) => User.countDocuments({ designation: d.name, status: { $ne: 'inactive' } }),
+  inUseCheck: (d, organizationId) => User.countDocuments({ designation: d.name, organizationId, status: { $ne: 'inactive' } }),
   afterUpdate: async (d, previousName) => {
     if (previousName !== d.name) {
-      await User.updateMany({ designation: previousName }, { $set: { designation: d.name } });
+      await User.updateMany({ organizationId: d.organizationId, designation: previousName }, { $set: { designation: d.name } });
     }
   },
 });
