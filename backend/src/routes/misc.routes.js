@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import * as reports from '../controllers/report.controller.js';
 import { calendar } from '../controllers/calendar.controller.js';
-import { listAuditLogs } from '../controllers/audit.controller.js';
+import { listAuditLogs, yearlyLeaveReport, exportYearlyLeaveReport } from '../controllers/audit.controller.js';
 import { authenticate, authorize, loadUser } from '../middleware/auth.js';
 import Organization from '../models/Organization.js';
 import { ValidationError } from '../utils/errors.js';
@@ -18,7 +18,8 @@ calendarRoutes.get('/', calendar);
 export const auditRoutes = Router();
 auditRoutes.use(authenticate, loadUser, authorize('admin'));
 auditRoutes.get('/', listAuditLogs);
-
+auditRoutes.get('/yearly', yearlyLeaveReport);
+auditRoutes.get('/yearly/export.csv', exportYearlyLeaveReport);
 
 // Organization leave-year settings. Defaults are Jan 1 when no setting has been changed.
 export const organizationSettingsRoutes = Router();
