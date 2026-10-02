@@ -38,6 +38,7 @@ export function sanitizeUser(user) {
   const u = typeof user.toObject === 'function' ? user.toObject() : { ...user };
   delete u.passwordHash;
   delete u.refreshTokenHash;
+  delete u.sessionRevokedAt;
   delete u.failedLoginAttempts;
   delete u.lockedUntil;
   delete u.__v;
