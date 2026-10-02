@@ -68,8 +68,6 @@ export async function migrateLegacyTenantOwnership() {
 
     await assignWhenSingleOrganization(LeavePolicy, policy, orgIds);
   }
-}
-
   // Legacy manager/employee accounts created with the old default-password
   // flow must complete a password change before normal application access.
   await User.updateMany(
@@ -80,3 +78,4 @@ export async function migrateLegacyTenantOwnership() {
     },
     { $set: { mustChangePassword: true } }
   );
+}
