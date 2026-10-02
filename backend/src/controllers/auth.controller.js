@@ -86,7 +86,7 @@ export const login = asyncHandler(async (req, res) => {
   await user.save();
 
   res.cookie('refreshToken', refreshToken, refreshCookieOptions());
-  return res.json({ success: true, accessToken, user: sanitizeUser(user) });
+  return res.json({ success: true, accessToken, mustChangePassword: Boolean(user.mustChangePassword), user: sanitizeUser(user) });
 });
 
 export const logout = asyncHandler(async (req, res) => {
@@ -180,6 +180,40 @@ export const forgotPassword = asyncHandler(async (req, res) => {
   return res.json(generic);
 });
 
+export const changePassword = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id);
+  if (!user || user.status !== 'active') {
+    return res.status(401).json({ success: false, message: 'Not authenticated' });
+  }
+  if (!user.organizationId) {
+    return res.status(401).json({ success: false, message: 'Not authenticated' });
+  }
+
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    throw new ValidationError('Current password and new password are required.');
+  }
+  if (String(newPassword).length < 8) {
+    throw new ValidationError('Password must be at least 8 characters.');
+  }
+  if (String(currentPassword) === String(newPassword)) {
+    throw new ValidationError('New password must be different from the current password.');
+  }
+
+  const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!matches) throw new ValidationError('Current password is incorrect.');
+
+  user.passwordHash = await bcrypt.hash(newPassword, 12);
+  user.passwordChangedFromDefault = true;
+  user.mustChangePassword = false;
+  user.refreshTokenHash = null;
+  user.failedLoginAttempts = 0;
+  user.lockedUntil = null;
+  await user.save();
+
+  return res.json({ success: true, data: { message: 'Password updated. Please sign in again.' } });
+});
+
 export const resetPassword = asyncHandler(async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) throw new ValidationError('Token and new password are required.');
@@ -199,6 +233,7 @@ export const resetPassword = asyncHandler(async (req, res) => {
 
   user.passwordHash = await bcrypt.hash(password, 10);
   user.passwordChangedFromDefault = true;
+  user.mustChangePassword = false;
   user.passwordResetTokenHash = null;
   user.passwordResetExpires = null;
   user.refreshTokenHash = null; // force re-login everywhere
