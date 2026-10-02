@@ -1,4 +1,5 @@
 import LeaveRequest from '../models/LeaveRequest.js';
+import User from '../models/User.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
 /**
@@ -16,8 +17,12 @@ export const calendar = asyncHandler(async (req, res) => {
     : new Date(now.getFullYear(), now.getMonth() + 1, 0);
   to.setHours(23, 59, 59, 999);
 
+  if (!req.currentUser.organizationId) throw new Error('Your account is not assigned to an organization.');
+  const organizationEmployeeIds = await User.distinct('_id', { organizationId: req.currentUser.organizationId });
+
   const filter = {
     status: 'approved',
+    employeeId: { $in: organizationEmployeeIds },
     isStopRequest: false,
     // Any leave that overlaps the window at all, not just ones starting in it.
     startDate: { $lte: to },
