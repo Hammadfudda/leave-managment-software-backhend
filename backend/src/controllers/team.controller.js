@@ -10,6 +10,8 @@ import { getLeaveBalancesForUser } from '../services/balance.service.js';
  * look at somebody else's team; only Admin may do that.
  */
 export const myTeam = asyncHandler(async (req, res) => {
+  const organizationId = req.currentUser.organizationId;
+  if (!organizationId) throw new Error('Your account is not assigned to an organization.');
   let managerId = req.currentUser._id;
   if (req.query.managerId) {
     if (req.currentUser.role !== 'admin') {
@@ -18,7 +20,7 @@ export const myTeam = asyncHandler(async (req, res) => {
     managerId = req.query.managerId;
   }
 
-  const members = await User.find({ managerId, status: 'active' })
+  const members = await User.find({ managerId, organizationId, status: 'active' })
     .populate('gradeId', 'name')
     .sort({ fullName: 1 });
 
@@ -35,7 +37,7 @@ export const myTeam = asyncHandler(async (req, res) => {
 
 /** Directory of managers, used by Admin's Managers view and approver pickers. */
 export const listManagers = asyncHandler(async (req, res) => {
-  const filter = { role: 'manager', status: 'active' };
+  const filter = { role: 'manager', organizationId: req.currentUser.organizationId, status: 'active' };
   if (req.query.department) filter.department = req.query.department;
 
   const managers = await User.find(filter).sort({ fullName: 1 });
@@ -44,7 +46,7 @@ export const listManagers = asyncHandler(async (req, res) => {
   for (const manager of managers) {
     data.push({
       ...sanitizeUser(manager),
-      directReportCount: await User.countDocuments({ managerId: manager._id, status: 'active' }),
+      directReportCount: await User.countDocuments({ managerId: manager._id, organizationId: req.currentUser.organizationId, status: 'active' }),
     });
   }
 
