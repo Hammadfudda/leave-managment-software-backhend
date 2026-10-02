@@ -173,7 +173,7 @@ export const templates = {
   |--------------------------------------------------------------------------
   */
 
-  accountCreated: (user) =>
+  accountCreated: (user, temporaryPassword) =>
     layout(
       "Your account is ready",
       `
@@ -186,7 +186,7 @@ export const templates = {
 
         <p>
           <strong>Email:</strong> ${user.email}<br/>
-          <strong>Password:</strong> your CNIC (${user.cnic})
+          <strong>Temporary password:</strong> ${temporaryPassword}
         </p>
 
         <p>
@@ -203,6 +203,20 @@ export const templates = {
             border:1px solid #e2e8f0;
             border-radius:8px;
             color:#475569;
+            font-size:13px;
+          "
+        >
+          Please sign in with the temporary password above and change it to a password only you know.
+        </p>
+
+        <p
+          style="
+            margin-top:20px;
+            padding:12px 14px;
+            background:#fff7ed;
+            border:1px solid #fed7aa;
+            border-radius:8px;
+            color:#9a3412;
             font-size:13px;
           "
         >
