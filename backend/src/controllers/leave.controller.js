@@ -22,16 +22,40 @@ import {
 
 /** Resolves the policy that governs this employee + leave type (Part 6.1). */
 async function resolvePolicy(leaveType, user) {
-  const candidates = await LeavePolicy.find({ leaveType });
-  if (candidates.length === 0) {
+  const candidates = await LeavePolicy.find({
+    leaveType,
+    $or: [{ organizationId: user.organizationId }, { organizationId: null }],
+  });
+
+  // Legacy shared policies with an explicit approver chain are only usable when
+  // every approver belongs to the applicant's organization. This keeps old
+  // records working without allowing a cross-tenant approval chain.
+  const safeCandidates = [];
+  for (const candidate of candidates) {
+    if (candidate.organizationId) {
+      safeCandidates.push(candidate);
+      continue;
+    }
+    if (!candidate.approvalRouting?.approverIds?.length) {
+      safeCandidates.push(candidate);
+      continue;
+    }
+    const count = await User.countDocuments({
+      _id: { $in: candidate.approvalRouting.approverIds },
+      organizationId: user.organizationId,
+    });
+    if (count === candidate.approvalRouting.approverIds.length) safeCandidates.push(candidate);
+  }
+  const usableCandidates = safeCandidates;
+  if (usableCandidates.length === 0) {
     throw new ValidationError(`No leave policy is configured for "${leaveType}".`);
   }
 
   // Prefer the most specific policy that this user actually falls under.
-  const scoped = candidates.filter((p) => checkApplicantScope(p, user) === null);
+  const scoped = usableCandidates.filter((p) => checkApplicantScope(p, user) === null);
   if (scoped.length === 0) {
     throw new ForbiddenError(
-      checkApplicantScope(candidates[0], user) || 'This leave type is not available to you.'
+      checkApplicantScope(usableCandidates[0], user) || 'This leave type is not available to you.'
     );
   }
 
