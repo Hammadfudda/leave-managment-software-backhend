@@ -78,8 +78,16 @@ export const getEmployee = asyncHandler(async (req, res) => {
   const user = await User.findOne({ _id: req.params.id, organizationId }).populate('gradeId');
   if (!user) throw new NotFoundError();
 
-  // An employee may only read their own record.
+  // Employees may only read themselves. Managers may only read employees
+  // in their assigned team/department, matching the existing list scope.
   if (req.currentUser.role === 'employee' && String(user._id) !== String(req.currentUser._id)) {
+    throw new NotFoundError();
+  }
+  if (
+    req.currentUser.role === 'manager' &&
+    String(user.managerId || '') !== String(req.currentUser._id) &&
+    user.department !== req.currentUser.department
+  ) {
     throw new NotFoundError();
   }
   const balances = await getLeaveBalancesForUser(user._id);
