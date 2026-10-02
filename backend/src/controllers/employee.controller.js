@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { parse } from 'csv-parse/sync';
 import { Parser } from 'json2csv';
 import User from '../models/User.js';
@@ -21,6 +22,10 @@ import { sendEmail, templates } from '../services/email.service.js';
 import { emailAdmins } from '../services/notification.service.js';
 
 const RESTORE_WINDOW_DAYS = 7;
+
+function generateTemporaryPassword() {
+  return crypto.randomBytes(18).toString('base64url');
+}
 
 function requireOrganizationId(currentUser) {
   if (!currentUser?.organizationId) {
@@ -129,13 +134,15 @@ export const createEmployee = asyncHandler(async (req, res) => {
   const grade = await Grade.findById(body.gradeId);
   if (!grade) throw new ValidationError('Unknown grade.');
 
+  const temporaryPassword = generateTemporaryPassword();
+
   const user = await User.create({
     organizationId,
     fullName: body.fullName,
     email: String(body.email).toLowerCase(),
     nationalId: body.cnic,
     cnic: body.cnic,
-    passwordHash: await bcrypt.hash(body.cnic, 10), // CNIC as default password
+    passwordHash: await bcrypt.hash(temporaryPassword, 10),
     role: body.role,
     gradeId: grade._id,
     managerId: body.managerId || null,
@@ -154,7 +161,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
   await sendEmail({
     to: user.email,
     subject: 'Your Leave Management account is ready',
-    html: templates.accountCreated(user),
+    html: templates.accountCreated(user, temporaryPassword),
   });
 
   await audit({
@@ -447,13 +454,15 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
       results.autoCreated.grades.push(row.grade);
     }
 
+    const temporaryPassword = generateTemporaryPassword();
+
     const newUser = await User.create({
       organizationId,
       fullName: row.fullName,
       email: String(row.email).toLowerCase(),
       nationalId: row.cnic,
       cnic: row.cnic,
-      passwordHash: await bcrypt.hash(row.cnic, 10),
+      passwordHash: await bcrypt.hash(temporaryPassword, 10),
       role: row.role || 'employee',
       designation: designation.name,
       department: department.name,
@@ -464,6 +473,13 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
     });
 
     await initializeLeaveBalances(newUser._id, grade);
+
+    await sendEmail({
+      to: newUser.email,
+      subject: 'Your Leave Management account is ready',
+      html: templates.accountCreated(newUser, temporaryPassword),
+    });
+
     results.created++;
   }
 
