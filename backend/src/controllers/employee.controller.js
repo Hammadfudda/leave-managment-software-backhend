@@ -20,7 +20,7 @@ import {
 } from '../services/balance.service.js';
 import { sendEmail, templates } from '../services/email.service.js';
 import { emailAdmins } from '../services/notification.service.js';
-import { generateTemporaryPassword, sendTemporaryAccountEmail } from '../services/temporaryPassword.service.js';
+import { generateTemporaryPassword as generateResetTemporaryPassword, sendTemporaryAccountEmail } from '../services/temporaryPassword.service.js';
 
 const RESTORE_WINDOW_DAYS = 7;
 
@@ -189,7 +189,7 @@ export const resetEmployeePassword = asyncHandler(async (req, res) => {
 
   if (!user) throw new NotFoundError('Employee or Manager not found.');
 
-  const temporaryPassword = generateTemporaryPassword();
+  const temporaryPassword = generateResetTemporaryPassword();
   const previous = {
     passwordHash: user.passwordHash,
     passwordChangedFromDefault: user.passwordChangedFromDefault,
