@@ -11,6 +11,7 @@ const userSchema = new Schema(
     nationalId: { type: String, required: true, unique: true },
     passwordHash: { type: String, required: true }, // bcrypt(nationalId) at creation
     passwordChangedFromDefault: { type: Boolean, default: false },
+    mustChangePassword: { type: Boolean, default: false },
 
     role: { type: String, enum: ['admin', 'manager', 'employee'], required: true },
     organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', default: null },
