@@ -326,6 +326,7 @@ export const removeEmployee = asyncHandler(async (req, res) => {
   user.scheduledPurgeAt = new Date(now.getTime() + RESTORE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   user.removedBy = req.currentUser._id;
   user.refreshTokenHash = null; // login blocked immediately
+  user.sessionRevokedAt = now;
   await user.save();
 
   const cancelled = await LeaveRequest.updateMany(
@@ -378,6 +379,7 @@ export const suspendEmployee = asyncHandler(async (req, res) => {
   }
   user.status = 'inactive';
   user.refreshTokenHash = null;
+  user.sessionRevokedAt = new Date();
   await user.save();
   await audit({
     actorId: req.currentUser._id, actorName: req.currentUser.fullName,
@@ -403,6 +405,7 @@ export const activateEmployee = asyncHandler(async (req, res) => {
   }
   user.status = 'active';
   user.refreshTokenHash = null;
+  user.sessionRevokedAt = new Date();
   await user.save();
   await audit({
     actorId: req.currentUser._id, actorName: req.currentUser.fullName,
@@ -427,6 +430,7 @@ export const restoreEmployee = asyncHandler(async (req, res) => {
   user.deactivatedAt = null;
   user.scheduledPurgeAt = null;
   user.removedBy = null;
+  user.sessionRevokedAt = new Date();
   await user.save();
 
   await audit({
