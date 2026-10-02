@@ -132,7 +132,10 @@ export const createEmployee = asyncHandler(async (req, res) => {
   });
   if (duplicate) throw new ConflictError('An employee with that email, CNIC or ID already exists.');
 
-  const grade = await Grade.findById(body.gradeId);
+  const grade = await Grade.findOne({
+    _id: body.gradeId,
+    $or: [{ organizationId }, { organizationId: null }],
+  });
   if (!grade) throw new ValidationError('Unknown grade.');
 
   const temporaryPassword = generateTemporaryPassword();
@@ -496,19 +499,28 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
     }
 
     // --- Auto-create related records instead of rejecting the row ---
-    let department = await Department.findOne({ name: row.department });
+    let department = await Department.findOne({
+      name: row.department,
+      $or: [{ organizationId }, { organizationId: null }],
+    });
     if (!department) {
-      department = await Department.create({ name: row.department, saturdayOff: true });
+      department = await Department.create({ name: row.department, saturdayOff: true, organizationId });
       results.autoCreated.departments.push(row.department);
     }
 
-    let designation = await Designation.findOne({ name: row.designation });
+    let designation = await Designation.findOne({
+      name: row.designation,
+      $or: [{ organizationId }, { organizationId: null }],
+    });
     if (!designation) {
-      designation = await Designation.create({ name: row.designation });
+      designation = await Designation.create({ name: row.designation, organizationId });
       results.autoCreated.designations.push(row.designation);
     }
 
-    let grade = await Grade.findOne({ name: row.grade });
+    let grade = await Grade.findOne({
+      name: row.grade,
+      $or: [{ organizationId }, { organizationId: null }],
+    });
     if (!grade) {
       // A brand-new grade needs *some* quota so new hires aren't stuck at zero —
       // default to the company baseline and let Admin adjust it afterward in the
@@ -516,6 +528,7 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
       // ticket for every CSV-imported employee whose grade was new.
       grade = await Grade.create({
         name: row.grade,
+        organizationId,
         annualLeaveQuota: 14,
         sickLeaveQuota: 7,
         casualLeaveQuota: 5,
