@@ -13,6 +13,9 @@ const userSchema = new Schema(
     passwordChangedFromDefault: { type: Boolean, default: false },
 
     role: { type: String, enum: ['admin', 'manager', 'employee'], required: true },
+    organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', default: null },
+    // HR Division label. Kept separate from the portal-access role.
+    roleLabel: { type: String, default: '' },
     // NOTE: There is no "team_leader" role. Any senior person who needs to approve
     // leave (e.g. a department head or "Chief") is simply given role: 'manager'.
 
