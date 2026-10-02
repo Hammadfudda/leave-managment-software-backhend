@@ -426,64 +426,46 @@ export const activateEmployee = asyncHandler(async (req, res) => {
   res.json({ success: true, data: sanitizeUser(user) });
 });
 export const restoreEmployee = asyncHandler(async (req, res) => {
-  const organizationId = requireOrganizationId(req.currentUser);
-  const user = await User.findOne({ _id: req.params.id, organizationId });
-  if (!user) throw new NotFoundError();
-  if (user.status !== 'pending_deletion') {
-    throw new ValidationError('This employee is not pending deletion.');
+  const currentUser = req.currentUser;
+  const organizationId = requireOrganizationId(currentUser);
+
+  const user = await User.findOne({
+    _id: req.params.id,
+    organizationId,
+    status: 'pending_deletion',
+  });
+
+  if (!user) throw new NotFoundError('Removed employee not found.');
+  if (user.scheduledPurgeAt && user.scheduledPurgeAt.getTime() <= Date.now()) {
+    throw new ValidationError('The 10-day restore window has expired.');
   }
 
-  user.status = 'active'; // same credentials work immediately
+  user.status = 'active';
   user.deactivatedAt = null;
   user.scheduledPurgeAt = null;
   user.removedBy = null;
+  user.refreshTokenHash = null;
   user.sessionRevokedAt = new Date();
+
   await user.save();
 
   await audit({
-    actorId: req.currentUser._id,
-    actorName: req.currentUser.fullName,
+    actorId: currentUser._id,
+    actorName: currentUser.fullName,
     action: 'RESTORE_EMPLOYEE',
     targetType: 'User',
     targetId: user._id,
     affectedPerson: user.fullName,
     department: user.department,
-    details: `Restored ${user.fullName} within the ${RESTORE_WINDOW_DAYS}-day window`,
+    details: 'Employee account restored from Recently Deleted.',
   });
 
-  await emailAdmins(
-    'Employee restored',
-    `${user.fullName} (${user.employeeId}) was restored by ${req.currentUser.fullName}.`
-  );
-
-  res.json({ success: true, data: sanitizeUser(user) });
-});
-
-export const listRemovedEmployees = asyncHandler(async (req, res) => {
-  const { page, limit, skip } = getPagination(req.query);
-  const filter = { status: 'pending_deletion', organizationId: requireOrganizationId(req.currentUser) };
-
-  const [users, total] = await Promise.all([
-    User.find(filter).populate('gradeId').sort({ scheduledPurgeAt: 1 }).skip(skip).limit(limit),
-    User.countDocuments(filter),
-  ]);
-
-  const now = Date.now();
-  const data = users.map((u) => {
-    const msRemaining = u.scheduledPurgeAt ? u.scheduledPurgeAt.getTime() - now : 0;
-    return {
-      ...sanitizeUser(u),
-      timeRemaining: {
-        msRemaining: Math.max(0, msRemaining),
-        daysRemaining: Math.max(0, Math.ceil(msRemaining / 86400000)),
-        purgesAt: u.scheduledPurgeAt,
-      },
-    };
+  res.json({
+    success: true,
+    message: 'Employee account restored successfully.',
+    data: sanitizeUser(user),
   });
-
-  res.json({ success: true, ...paginated(data, total, { page, limit }) });
 });
-
 /** Spec Part 10.1 — export includes leave balances, not just profile fields. */
 export const exportEmployeesCsv = asyncHandler(async (req, res) => {
   const users = await User.find({ organizationId: requireOrganizationId(req.currentUser) }).populate('gradeId');
