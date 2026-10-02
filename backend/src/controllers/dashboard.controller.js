@@ -53,6 +53,10 @@ function onLeaveWindowFilter(from, to) {
 }
 
 export const adminDashboard = asyncHandler(async (req, res) => {
+  if (!req.currentUser.organizationId) throw new Error('Your account is not assigned to an organization.');
+  const organizationId = req.currentUser.organizationId;
+  const organizationEmployeeIds = await User.distinct('_id', { organizationId });
+  const organizationDepartmentNames = await User.distinct('department', { organizationId, department: { $nin: [null, ''] } });
   const today = startOfToday();
   const endOfToday = new Date(today);
   endOfToday.setHours(23, 59, 59, 999);
@@ -68,18 +72,19 @@ export const adminDashboard = asyncHandler(async (req, res) => {
     recentAuditActivity,
     departments,
   ] = await Promise.all([
-    User.countDocuments({ status: 'active' }),
+    User.countDocuments({ status: 'active', organizationId }),
     // Whole company: every chain-based pending request AND every admin-only one.
-    LeaveRequest.countDocuments({ status: 'pending' }),
-    LeaveRequest.countDocuments({ status: 'pending', isAdminOnlyDecision: true }),
-    LeaveRequest.find(onLeaveWindowFilter(today, endOfToday)).sort({ startDate: 1 }),
+    LeaveRequest.countDocuments({ status: 'pending', employeeId: { $in: organizationEmployeeIds } }),
+    LeaveRequest.countDocuments({ status: 'pending', isAdminOnlyDecision: true, employeeId: { $in: organizationEmployeeIds } }),
+    LeaveRequest.find({ ...onLeaveWindowFilter(today, endOfToday), employeeId: { $in: organizationEmployeeIds } }).sort({ startDate: 1 }),
     LeaveRequest.find({
+      employeeId: { $in: organizationEmployeeIds },
       status: 'approved',
       isStopRequest: false,
       startDate: { $gt: endOfToday, $lte: in7Days },
     }).sort({ startDate: 1 }),
-    AuditLog.find({}).sort({ createdAt: -1 }).limit(Number(req.query.auditLimit) || 10),
-    Department.find({}),
+    AuditLog.find({ actorId: { $in: organizationEmployeeIds } }).sort({ createdAt: -1 }).limit(Number(req.query.auditLimit) || 10),
+    Department.find({ name: { $in: organizationDepartmentNames } }),
   ]);
 
   res.json({
@@ -102,6 +107,9 @@ export const adminDashboard = asyncHandler(async (req, res) => {
 
 export const managerDashboard = asyncHandler(async (req, res) => {
   const me = req.currentUser;
+  if (!me.organizationId) throw new Error('Your account is not assigned to an organization.');
+  const organizationId = me.organizationId;
+  const organizationEmployeeIds = await User.distinct('_id', { organizationId });
   const today = startOfToday();
   const endOfToday = new Date(today);
   endOfToday.setHours(23, 59, 59, 999);
@@ -110,15 +118,17 @@ export const managerDashboard = asyncHandler(async (req, res) => {
 
   const [pendingForMe, teamSize, teamOnLeaveToday, teamCalendar, myBalances, myRequests] =
     await Promise.all([
-      LeaveRequest.find({ status: 'pending', requiredApproverIds: me._id }).sort({ createdAt: -1 }),
-      User.countDocuments({ status: 'active', managerId: me._id }),
+      LeaveRequest.find({ status: 'pending', employeeId: { $in: organizationEmployeeIds }, requiredApproverIds: me._id }).sort({ createdAt: -1 }),
+      User.countDocuments({ status: 'active', organizationId, managerId: me._id }),
       LeaveRequest.find({
         ...onLeaveWindowFilter(today, endOfToday),
+        employeeId: { $in: organizationEmployeeIds },
         department: me.department,
       }).sort({ startDate: 1 }),
       LeaveRequest.find({
         status: 'approved',
         isStopRequest: false,
+        employeeId: { $in: organizationEmployeeIds },
         department: me.department,
         startDate: { $lte: in30Days },
         $or: [{ actualEndDate: { $gte: today } }, { actualEndDate: null, endDate: { $gte: today } }],
