@@ -1,19 +1,14 @@
 import cron from 'node-cron';
 import User from '../models/User.js';
 import Organization from '../models/Organization.js';
-import LeaveBalance from '../models/LeaveBalance.js';
-import Notification from '../models/Notification.js';
 import { audit } from '../utils/audit.js';
 import { emailAdmins } from '../services/notification.service.js';
 import { purgeEmployeeData, purgeOrganizationData, RESTORE_WINDOW_DAYS } from '../services/deletion.service.js';
 
 /**
- * Spec Part 4 — a removed employee sits in `pending_deletion` for 7 days and
- * can be restored during that window. Once scheduledPurgeAt passes, the record
- * and everything personal attached to it is permanently deleted.
- *
- * LeaveRequests are deliberately NOT deleted: they are part of the approval
- * record other people acted on, and audit logs reference them.
+ * Deleted employee accounts and organizations remain restorable for 10 days.
+ * Once scheduledPurgeAt passes, the scheduled purge permanently removes the
+ * account/tenant data that belongs to the deleted subject.
  */
 export async function purgeExpiredEmployees() {
   const now = new Date();
