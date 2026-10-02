@@ -24,6 +24,7 @@ export async function purgeEmployeeData(userId) {
       {
         $set: {
           employeeName: anonymousName,
+          employeeDeleted: true,
           department: user.department || '',
         },
       }
