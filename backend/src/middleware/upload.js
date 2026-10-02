@@ -8,6 +8,9 @@ import cloudinary from '../config/cloudinary.js';
  * specifically so file-type/size validation can't be bypassed by tampering
  * with client-side code.
  */
+const ALLOWED_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'pdf']);
+const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf']);
+
 const storage = new CloudinaryStorage({
   cloudinary,
   params: { folder: 'leave-attachments', allowed_formats: ['jpg', 'jpeg', 'png', 'pdf'] },
@@ -16,6 +19,13 @@ const storage = new CloudinaryStorage({
 export const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const extension = String(file.originalname || '').split('.').pop()?.toLowerCase();
+    if (!extension || !ALLOWED_EXTENSIONS.has(extension) || !ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      return cb(new Error('Only valid JPG, JPEG, PNG or PDF files are accepted.'));
+    }
+    cb(null, true);
+  },
 });
 
 /** CSV import stays in memory — it is parsed, never stored. */
