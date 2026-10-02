@@ -110,7 +110,7 @@ export async function sendEmail({
 
     await transporter.sendMail({
       from: {
-        name: "Nedd Consultant",
+        name: "Nedd Digital",
         address: getSenderAddress(),
       },
       to,
@@ -160,7 +160,7 @@ export function layout(title, body) {
         color:#888;
       "
     >
-      Nedd Consultant
+      Nedd Digital
     </p>
   </div>
   `;
@@ -181,7 +181,7 @@ export const templates = {
 
         <p>
           An account has been created for you on
-          Nedd Consultant.
+          Nedd Digital.
         </p>
 
         <p>
