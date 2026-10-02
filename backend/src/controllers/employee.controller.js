@@ -197,6 +197,7 @@ export const resetEmployeePassword = asyncHandler(async (req, res) => {
   const temporaryPassword = generateResetTemporaryPassword();
   const previous = {
     passwordHash: user.passwordHash,
+    passwordChangedAt: user.passwordChangedAt,
     passwordChangedFromDefault: user.passwordChangedFromDefault,
     mustChangePassword: user.mustChangePassword,
     refreshTokenHash: user.refreshTokenHash,
@@ -204,6 +205,7 @@ export const resetEmployeePassword = asyncHandler(async (req, res) => {
 
   user.passwordHash = await bcrypt.hash(temporaryPassword, 12);
   user.passwordChangedFromDefault = false;
+  user.passwordChangedAt = new Date();
   user.mustChangePassword = true;
   user.refreshTokenHash = null;
   user.failedLoginAttempts = 0;
@@ -219,6 +221,7 @@ export const resetEmployeePassword = asyncHandler(async (req, res) => {
 
   if (!emailSent) {
     user.passwordHash = previous.passwordHash;
+    user.passwordChangedAt = previous.passwordChangedAt;
     user.passwordChangedFromDefault = previous.passwordChangedFromDefault;
     user.mustChangePassword = previous.mustChangePassword;
     user.refreshTokenHash = previous.refreshTokenHash;
