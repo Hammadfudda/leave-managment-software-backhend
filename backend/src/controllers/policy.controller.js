@@ -170,7 +170,7 @@ export const updatePolicy = asyncHandler(async (req, res) => {
  * department when canApproveOtherDepartments is explicitly granted.
  */
 export const listEligibleApprovers = asyncHandler(async (req, res) => {
-  const approvers = await getEligibleApprovers(req.query.department);
+  const approvers = await getEligibleApprovers(req.query.department, req.currentUser.organizationId);
   res.json({
     success: true,
     data: approvers.map((u) => ({
