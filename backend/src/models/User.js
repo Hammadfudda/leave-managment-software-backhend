@@ -58,6 +58,7 @@ const userSchema = new Schema(
     failedLoginAttempts: { type: Number, default: 0 },
     lockedUntil: { type: Date, default: null },
     refreshTokenHash: { type: String, default: null },
+    sessionRevokedAt: { type: Date, default: null },
     lastLoginAt: { type: Date, default: null },
 
     // Password reset (Part 11 — /auth/forgot-password, /auth/reset-password)
