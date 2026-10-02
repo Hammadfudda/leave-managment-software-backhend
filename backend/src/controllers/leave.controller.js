@@ -75,8 +75,11 @@ async function resolveChainFor(policy, user) {
   };
 }
 
-async function saturdayOffFor(departmentName) {
-  const dept = await Department.findOne({ name: departmentName });
+async function saturdayOffFor(departmentName, organizationId) {
+  const dept = await Department.findOne({
+    name: departmentName,
+    $or: [{ organizationId }, { organizationId: null }],
+  });
   return dept?.saturdayOff ?? true;
 }
 
@@ -219,7 +222,7 @@ export const createLeaveRequest = asyncHandler(async (req, res) => {
     throw new ValidationError('A supporting document is required for this leave type.');
   }
 
-  const saturdayOff = await saturdayOffFor(user.department);
+  const saturdayOff = await saturdayOffFor(user.department, user.organizationId);
   const totalWorkingDays = calcWorkingDays(start, end, saturdayOff);
   if (totalWorkingDays === 0) {
     throw new ValidationError('The selected range contains no working days.');
@@ -330,7 +333,7 @@ export const extendLeave = asyncHandler(async (req, res) => {
   const start = new Date(currentEnd);
   start.setDate(start.getDate() + 1);
 
-  const saturdayOff = await saturdayOffFor(user.department);
+  const saturdayOff = await saturdayOffFor(user.department, user.organizationId);
   const totalWorkingDays = calcWorkingDays(start, end, saturdayOff);
   if (totalWorkingDays === 0) {
     throw new ValidationError('The extension contains no working days.');
