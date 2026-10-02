@@ -19,10 +19,9 @@ import {
   CORE_LEAVE_TYPES,
 } from '../services/balance.service.js';
 import { sendEmail, templates } from '../services/email.service.js';
+import { RESTORE_WINDOW_DAYS } from '../services/deletion.service.js';
 import { emailAdmins } from '../services/notification.service.js';
 import { generateTemporaryPassword as generateResetTemporaryPassword, sendTemporaryAccountEmail } from '../services/temporaryPassword.service.js';
-
-const RESTORE_WINDOW_DAYS = 7;
 
 function generateTemporaryPassword() {
   return crypto.randomBytes(18).toString('base64url');
@@ -364,6 +363,58 @@ export const removeEmployee = asyncHandler(async (req, res) => {
   res.json({ success: true, data: sanitizeUser(user) });
 });
 
+export const suspendEmployee = asyncHandler(async (req, res) => {
+  const organizationId = requireOrganizationId(req.currentUser);
+  const user = await User.findOne({ _id: req.params.id, organizationId });
+  if (!user) throw new NotFoundError();
+  if (String(user._id) === String(req.currentUser._id)) {
+    throw new ValidationError('You cannot suspend your own account.');
+  }
+  if (user.status === 'pending_deletion') {
+    throw new ValidationError('Restore the account before changing its suspension status.');
+  }
+  if (user.status === 'inactive') {
+    throw new ValidationError('This account is already suspended.');
+  }
+  user.status = 'inactive';
+  user.refreshTokenHash = null;
+  await user.save();
+  await audit({
+    actorId: req.currentUser._id, actorName: req.currentUser.fullName,
+    action: 'SUSPEND_EMPLOYEE', targetType: 'User', targetId: user._id,
+    affectedPerson: user.fullName, department: user.department,
+    details: `Suspended \${user.fullName}; all active sessions were revoked.`,
+  });
+  await emailAdmins('Employee suspended',
+    `\${user.fullName} (\${user.employeeId}) was suspended by \${req.currentUser.fullName}.`
+  );
+  res.json({ success: true, data: sanitizeUser(user) });
+});
+
+export const activateEmployee = asyncHandler(async (req, res) => {
+  const organizationId = requireOrganizationId(req.currentUser);
+  const user = await User.findOne({ _id: req.params.id, organizationId });
+  if (!user) throw new NotFoundError();
+  if (user.status === 'pending_deletion') {
+    throw new ValidationError('Restore the account from Recently Deleted first.');
+  }
+  if (user.status === 'active') {
+    throw new ValidationError('This account is already active.');
+  }
+  user.status = 'active';
+  user.refreshTokenHash = null;
+  await user.save();
+  await audit({
+    actorId: req.currentUser._id, actorName: req.currentUser.fullName,
+    action: 'ACTIVATE_EMPLOYEE', targetType: 'User', targetId: user._id,
+    affectedPerson: user.fullName, department: user.department,
+    details: `Activated \${user.fullName} and revoked old sessions.`,
+  });
+  await emailAdmins('Employee activated',
+    `\${user.fullName} (\${user.employeeId}) was activated by \${req.currentUser.fullName}.`
+  );
+  res.json({ success: true, data: sanitizeUser(user) });
+});
 export const restoreEmployee = asyncHandler(async (req, res) => {
   const organizationId = requireOrganizationId(req.currentUser);
   const user = await User.findOne({ _id: req.params.id, organizationId });
