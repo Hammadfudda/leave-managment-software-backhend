@@ -441,9 +441,18 @@ export const getBalance = asyncHandler(async (req, res) => {
   const isSelf = String(employeeId) === String(req.currentUser._id);
   if (!isSelf && req.currentUser.role === 'employee') throw new NotFoundError();
 
-  const employee = await User.findById(employeeId).select('organizationId');
+  const employee = await User.findById(employeeId).select('organizationId managerId department');
   if (!employee || !req.currentUser.organizationId ||
       String(employee.organizationId) !== String(req.currentUser.organizationId)) {
+    throw new NotFoundError();
+  }
+
+  // Match the existing manager scope used by the employee list.
+  if (
+    req.currentUser.role === 'manager' &&
+    String(employee.managerId || '') !== String(req.currentUser._id) &&
+    employee.department !== req.currentUser.department
+  ) {
     throw new NotFoundError();
   }
 
