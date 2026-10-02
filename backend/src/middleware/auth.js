@@ -52,6 +52,13 @@ export const loadUser = asyncHandler(async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Not authenticated' });
     }
   }
+  if (user.mustChangePassword) {
+    return res.status(403).json({
+      success: false,
+      code: 'PASSWORD_CHANGE_REQUIRED',
+      message: 'You must change your temporary password before continuing.',
+    });
+  }
   req.currentUser = user;
   next();
 });
