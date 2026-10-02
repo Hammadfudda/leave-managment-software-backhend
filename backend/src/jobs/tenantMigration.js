@@ -68,6 +68,26 @@ export async function migrateLegacyTenantOwnership() {
 
     await assignWhenSingleOrganization(LeavePolicy, policy, orgIds);
   }
+  // Existing pending deletions created under the old 7-day policy are
+  // normalized to the new 10-day restore window from their original removal time.
+  const pendingDeletionUsers = await User.find({
+    status: 'pending_deletion',
+    deactivatedAt: { $ne: null },
+  }).select('_id deactivatedAt scheduledPurgeAt');
+
+  for (const user of pendingDeletionUsers) {
+    const expectedPurgeAt = new Date(
+      user.deactivatedAt.getTime() + 10 * 24 * 60 * 60 * 1000
+    );
+    if (
+      !user.scheduledPurgeAt ||
+      user.scheduledPurgeAt.getTime() < expectedPurgeAt.getTime()
+    ) {
+      user.scheduledPurgeAt = expectedPurgeAt;
+      await user.save();
+    }
+  }
+
   // Legacy manager/employee accounts created with the old default-password
   // flow must complete a password change before normal application access.
   await User.updateMany(
