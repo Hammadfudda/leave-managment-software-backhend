@@ -5,6 +5,7 @@ const { Schema } = mongoose;
 // Spec Part 2.6
 const leavePolicySchema = new Schema(
   {
+    organizationId: { type: Schema.Types.ObjectId, ref: 'Organization', default: null, index: true },
     // 'annual' | 'sick' | 'casual' | 'unpaid' | 'maternity' | 'paternity' | custom
     leaveType: { type: String, required: true },
     applicableRole: {
