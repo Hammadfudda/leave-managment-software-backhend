@@ -32,7 +32,7 @@ function normalizeRouting(body, adminOnly) {
 
 /** Admin sees everything; a manager only sees policies they are an approver on. */
 export const listPolicies = asyncHandler(async (req, res) => {
-  const filter = {};
+  const filter = { $or: [{ organizationId: req.currentUser.organizationId }, { organizationId: null }] };
   if (req.currentUser.role !== 'admin') {
     filter['approvalRouting.approverIds'] = req.currentUser._id;
   }
@@ -68,6 +68,7 @@ export const createPolicy = asyncHandler(async (req, res) => {
   // Every approver must actually exist and be an active admin or manager.
   const approvers = await User.find({
     _id: { $in: approvalRouting.approverIds },
+    organizationId: req.currentUser.organizationId,
     role: { $in: ['admin', 'manager'] },
     status: 'active',
   });
@@ -76,6 +77,7 @@ export const createPolicy = asyncHandler(async (req, res) => {
   }
 
   const policy = await LeavePolicy.create({
+    organizationId: req.currentUser.organizationId,
     leaveType,
     applicableRole: applicableRole || 'All Employees',
     isPaid: isPaid !== undefined ? Boolean(isPaid) : true,
@@ -105,7 +107,7 @@ export const createPolicy = asyncHandler(async (req, res) => {
 });
 
 export const updatePolicy = asyncHandler(async (req, res) => {
-  const policy = await LeavePolicy.findById(req.params.id);
+  const policy = await LeavePolicy.findOne({ _id: req.params.id, organizationId: req.currentUser.organizationId });
   if (!policy) throw new NotFoundError();
 
   const { leaveType, applicableRole, isPaid, minDaysNoticeRequired, documentRequirement } = req.body;
@@ -134,6 +136,7 @@ export const updatePolicy = asyncHandler(async (req, res) => {
     }
     const approvers = await User.find({
       _id: { $in: approvalRouting.approverIds },
+      organizationId: req.currentUser.organizationId,
       role: { $in: ['admin', 'manager'] },
       status: 'active',
     });
