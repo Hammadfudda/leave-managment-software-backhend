@@ -104,6 +104,10 @@ async function decideAsAdmin(request, approver, action, comment) {
 export async function approveLeave(requestId, approver, comment) {
   const request = await LeaveRequest.findById(requestId);
   if (!request) throw new NotFoundError();
+  const owner = await User.findById(request.employeeId).select('organizationId');
+  if (!owner || !approver.organizationId || String(owner.organizationId) !== String(approver.organizationId)) {
+    throw new NotFoundError();
+  }
 
   // RULE: nobody approves their own leave. Not even Admin. No exceptions.
   if (String(request.employeeId) === String(approver._id)) {
@@ -168,6 +172,10 @@ export async function approveLeave(requestId, approver, comment) {
 export async function rejectLeave(requestId, approver, comment) {
   const request = await LeaveRequest.findById(requestId);
   if (!request) throw new NotFoundError();
+  const owner = await User.findById(request.employeeId).select('organizationId');
+  if (!owner || !approver.organizationId || String(owner.organizationId) !== String(approver.organizationId)) {
+    throw new NotFoundError();
+  }
 
   if (String(request.employeeId) === String(approver._id)) {
     throw new ForbiddenError('You cannot reject your own leave request.');
@@ -231,6 +239,10 @@ export async function rejectLeave(requestId, approver, comment) {
 export async function actOnBehalf(requestId, admin, targetApproverId, action, comment) {
   const request = await LeaveRequest.findById(requestId);
   if (!request) throw new NotFoundError();
+  const owner = await User.findById(request.employeeId).select('organizationId');
+  if (!owner || !admin.organizationId || String(owner.organizationId) !== String(admin.organizationId)) {
+    throw new NotFoundError();
+  }
   // ADDENDUM 2.1 — there is no slot to fill on an admin-only request; Admin
   // uses the plain approve/reject endpoints for those.
   if (request.isAdminOnlyDecision) {
@@ -239,7 +251,9 @@ export async function actOnBehalf(requestId, admin, targetApproverId, action, co
     );
   }
   const targetApprover = await User.findById(targetApproverId);
-  if (!targetApprover) throw new NotFoundError();
+  if (!targetApprover || String(targetApprover.organizationId) !== String(admin.organizationId)) {
+    throw new NotFoundError();
+  }
 
   if (String(request.employeeId) === String(targetApproverId)) {
     throw new ForbiddenError('Cannot act on behalf of the employee for their own request.');
