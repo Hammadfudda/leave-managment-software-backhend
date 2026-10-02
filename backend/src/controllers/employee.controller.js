@@ -274,10 +274,18 @@ export const updateEmployee = asyncHandler(async (req, res) => {
     } else if (field === 'dateOfJoining') {
       user.dateOfJoining = new Date(req.body.dateOfJoining);
     } else if (field === 'status') {
-      // Removal/restore go through their own endpoints so the 10-day window and
-      // token revocation can't be bypassed by a plain PATCH.
+      // Deletion/restore must use their dedicated endpoints so the 10-day
+      // window cannot be bypassed by a generic PATCH.
       if (req.body.status === 'pending_deletion') continue;
+      if (user.status === 'pending_deletion') {
+        throw new ValidationError('Restore the account from Recently Deleted before changing its status.');
+      }
+      if (!['active', 'inactive'].includes(req.body.status)) {
+        throw new ValidationError('Account status must be active or inactive.');
+      }
       user.status = req.body.status;
+      user.refreshTokenHash = null;
+      user.sessionRevokedAt = new Date();
     } else {
       user[field] = req.body[field];
     }
