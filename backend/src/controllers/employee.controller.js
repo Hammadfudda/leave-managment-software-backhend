@@ -274,7 +274,7 @@ export const updateEmployee = asyncHandler(async (req, res) => {
     } else if (field === 'dateOfJoining') {
       user.dateOfJoining = new Date(req.body.dateOfJoining);
     } else if (field === 'status') {
-      // Removal/restore go through their own endpoints so the 7-day window and
+      // Removal/restore go through their own endpoints so the 10-day window and
       // token revocation can't be bypassed by a plain PATCH.
       if (req.body.status === 'pending_deletion') continue;
       user.status = req.body.status;
@@ -383,10 +383,10 @@ export const suspendEmployee = asyncHandler(async (req, res) => {
     actorId: req.currentUser._id, actorName: req.currentUser.fullName,
     action: 'SUSPEND_EMPLOYEE', targetType: 'User', targetId: user._id,
     affectedPerson: user.fullName, department: user.department,
-    details: `Suspended \${user.fullName}; all active sessions were revoked.`,
+    details: `Suspended ${user.fullName}; all active sessions were revoked.`,
   });
   await emailAdmins('Employee suspended',
-    `\${user.fullName} (\${user.employeeId}) was suspended by \${req.currentUser.fullName}.`
+    `${user.fullName} (${user.employeeId}) was suspended by ${req.currentUser.fullName}.`
   );
   res.json({ success: true, data: sanitizeUser(user) });
 });
@@ -408,10 +408,10 @@ export const activateEmployee = asyncHandler(async (req, res) => {
     actorId: req.currentUser._id, actorName: req.currentUser.fullName,
     action: 'ACTIVATE_EMPLOYEE', targetType: 'User', targetId: user._id,
     affectedPerson: user.fullName, department: user.department,
-    details: `Activated \${user.fullName} and revoked old sessions.`,
+    details: `Activated ${user.fullName} and revoked old sessions.`,
   });
   await emailAdmins('Employee activated',
-    `\${user.fullName} (\${user.employeeId}) was activated by \${req.currentUser.fullName}.`
+    `${user.fullName} (${user.employeeId}) was activated by ${req.currentUser.fullName}.`
   );
   res.json({ success: true, data: sanitizeUser(user) });
 });
