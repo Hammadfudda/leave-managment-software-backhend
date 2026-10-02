@@ -14,7 +14,7 @@ import {
   designationRoutes,
   roleRoutes,
 } from './taxonomy.routes.js';
-import { reportRoutes, calendarRoutes, auditRoutes } from './misc.routes.js';
+import { reportRoutes, calendarRoutes, auditRoutes, organizationSettingsRoutes } from './misc.routes.js';
 
 const router = Router();
 
@@ -34,6 +34,7 @@ router.use('/dashboard', dashboardRoutes);
 router.use('/reports', reportRoutes);
 router.use('/calendar', calendarRoutes);
 router.use('/audit-logs', auditRoutes);
+router.use('/organization-settings', organizationSettingsRoutes);
 router.use('/feedback', feedbackRoutes);
 router.use('/super-admin', superAdminRoutes);
 
