@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import Organization from '../models/Organization.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
 /**
@@ -38,6 +39,12 @@ export const loadUser = asyncHandler(async (req, res, next) => {
   const user = await User.findById(req.user.id);
   if (!user || user.status !== 'active') {
     return res.status(401).json({ success: false, message: 'Not authenticated' });
+  }
+  if (user.organizationId) {
+    const organization = await Organization.findById(user.organizationId).select('status').lean();
+    if (!organization || organization.status !== 'active') {
+      return res.status(401).json({ success: false, message: 'Not authenticated' });
+    }
   }
   req.currentUser = user;
   next();
