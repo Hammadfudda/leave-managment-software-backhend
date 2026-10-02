@@ -89,14 +89,14 @@ export const summary = asyncHandler(async (req, res) => {
       activeEmployees: await User.countDocuments(employeeFilter),
       pendingDeletion:
         req.currentUser.role === 'admin'
-          ? await User.countDocuments({ status: 'pending_deletion' })
+          ? await User.countDocuments({ status: 'pending_deletion', organizationId: req.currentUser.organizationId })
           : undefined,
     },
   });
 });
 
 export const exportRequestsCsv = asyncHandler(async (req, res) => {
-  const filter = applyFilters({ ...scopeFor(req.currentUser) }, req.query);
+  const filter = applyFilters(await scopeFor(req.currentUser), req.query);
   const requests = await LeaveRequest.find(filter).sort({ createdAt: -1 });
 
   const rows = requests.map((r) => ({
