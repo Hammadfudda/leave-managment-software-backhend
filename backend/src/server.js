@@ -7,8 +7,8 @@ import { migrateLegacyTenantOwnership } from './jobs/tenantMigration.js';
 const PORT = process.env.PORT || 5000;
 
 const REQUIRED_ENV = ['MONGODB_URI', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'];
-if (process.env.NODE_ENV === 'production' && process.env.COOKIE_SECURE !== 'true') {
-  REQUIRED_ENV.push('COOKIE_SECURE');
+if (process.env.NODE_ENV === 'production') {
+  if (process.env.COOKIE_SECURE !== 'true') REQUIRED_ENV.push('COOKIE_SECURE');
   REQUIRED_ENV.push('CRON_SECRET');
 }
 
