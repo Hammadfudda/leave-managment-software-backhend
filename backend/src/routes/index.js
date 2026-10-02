@@ -15,10 +15,12 @@ import {
   roleRoutes,
 } from './taxonomy.routes.js';
 import { reportRoutes, calendarRoutes, auditRoutes, organizationSettingsRoutes } from './misc.routes.js';
+import cronRoutes from './cron.routes.js';
 
 const router = Router();
 
 router.get('/health', (req, res) => res.json({ success: true, status: 'ok' }));
+router.use('/cron', cronRoutes);
 
 router.use('/auth', authRoutes);
 router.use('/employees', employeeRoutes);
