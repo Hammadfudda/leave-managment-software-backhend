@@ -16,7 +16,14 @@ const userSchema = new Schema(
     // NOTE: There is no "team_leader" role. Any senior person who needs to approve
     // leave (e.g. a department head or "Chief") is simply given role: 'manager'.
 
-    gradeId: { type: Schema.Types.ObjectId, ref: 'Grade', required: true },
+    gradeId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Grade',
+      // Client Admins created by Super Admin do not have a grade.
+      required: function () {
+        return this.role !== 'admin';
+      },
+    },
     managerId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
 
     // Manager-only. Controls whether this person can be selected as a required
@@ -25,7 +32,13 @@ const userSchema = new Schema(
     canApproveOtherDepartments: { type: Boolean, default: false },
 
     employeeId: { type: String, required: true, unique: true }, // e.g. "NDD-004"
-    cnic: { type: String, required: true },
+    // Client Admins do not need a CNIC. Employees/managers still require it.
+    cnic: {
+      type: String,
+      required: function () {
+        return this.role !== 'admin';
+      },
+    },
     designation: { type: String, required: true },
     department: { type: String, required: true },
     phone: { type: String },
