@@ -28,10 +28,6 @@ export const login = asyncHandler(async (req, res) => {
   if (!user) return invalid();
   // This is what makes a removed employee's login stop immediately.
   if (user.status !== 'active') return invalid();
-  if (user.organizationId) {
-    const organization = await Organization.findById(user.organizationId).select('status').lean();
-    if (!organization || organization.status !== 'active') return invalid();
-  }
   if (user.lockedUntil && user.lockedUntil > Date.now()) {
     return res
       .status(423)
@@ -52,6 +48,25 @@ export const login = asyncHandler(async (req, res) => {
       userAgent: req.headers['user-agent'],
     });
     return invalid();
+  }
+
+  if (!user.organizationId) {
+    user.refreshTokenHash = null;
+    await user.save();
+    return res.status(403).json({
+      success: false,
+      message: 'Your account is not assigned to an organization.',
+    });
+  }
+
+  const organization = await Organization.findById(user.organizationId).select('status').lean();
+  if (!organization || organization.status !== 'active') {
+    user.refreshTokenHash = null;
+    await user.save();
+    return res.status(403).json({
+      success: false,
+      message: 'Your organization is not active.',
+    });
   }
 
   user.failedLoginAttempts = 0;
@@ -103,6 +118,14 @@ export const refresh = asyncHandler(async (req, res) => {
   const user = await User.findById(payload.id);
   if (!user || user.status !== 'active' || !user.refreshTokenHash) {
     return res.status(401).json({ success: false, message: 'Not authenticated' });
+  }
+  if (!user.organizationId) {
+    user.refreshTokenHash = null;
+    await user.save();
+    return res.status(401).json({
+      success: false,
+      message: 'Your account is not assigned to an organization.',
+    });
   }
   if (user.organizationId) {
     const organization = await Organization.findById(user.organizationId).select('status').lean();
