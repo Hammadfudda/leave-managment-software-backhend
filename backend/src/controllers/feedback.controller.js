@@ -14,9 +14,7 @@ import {
   sendEmail,
 } from '../services/email.service.js';
 
-const OWNER_EMAIL =
-  process.env.SUPER_ADMIN_FEEDBACK_EMAIL ||
-  'hammaddanish7@gmail.com';
+const OWNER_EMAIL = 'hammaddanish7@gmail.com';
 
 function clean(value) {
   return String(
