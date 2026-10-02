@@ -83,7 +83,7 @@ async function resolveChainFor(policy, user) {
     const NO_MANAGER =
       'No active Manager is assigned to this employee. Please contact an administrator.';
     if (!user.managerId) throw new ValidationError(NO_MANAGER);
-    const manager = await User.findById(user.managerId);
+    const manager = await User.findOne({ _id: user.managerId, organizationId: user.organizationId });
     if (!manager || manager.role !== 'manager' || manager.status !== 'active') {
       throw new ValidationError(NO_MANAGER);
     }
