@@ -40,6 +40,9 @@ export const loadUser = asyncHandler(async (req, res, next) => {
   if (!user || user.status !== 'active') {
     return res.status(401).json({ success: false, message: 'Not authenticated' });
   }
+  if (user.passwordChangedAt && req.user.iat && req.user.iat * 1000 < user.passwordChangedAt.getTime()) {
+    return res.status(401).json({ success: false, message: 'Session expired. Please sign in again.' });
+  }
   if (!user.organizationId) {
     return res.status(401).json({
       success: false,
