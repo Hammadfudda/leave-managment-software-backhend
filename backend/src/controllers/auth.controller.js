@@ -150,7 +150,7 @@ export const refresh = asyncHandler(async (req, res) => {
   await user.save();
 
   res.cookie('refreshToken', newRefreshToken, refreshCookieOptions());
-  return res.json({ success: true, accessToken, user: sanitizeUser(user) });
+  return res.json({ success: true, accessToken, mustChangePassword: Boolean(user.mustChangePassword), user: sanitizeUser(user) });
 });
 
 /** Always responds identically, so it can't be used to enumerate accounts. */
