@@ -7,6 +7,7 @@ const leaveRequestSchema = new Schema(
   {
     employeeId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     employeeName: String,
+    employeeDeleted: { type: Boolean, default: false },
     department: String,
     leaveType: { type: String, required: true },
 
