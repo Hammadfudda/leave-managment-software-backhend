@@ -316,9 +316,8 @@ export const updateEmployee = asyncHandler(async (req, res) => {
 
 /**
  * Spec Part 4 — soft delete. Refresh tokens are revoked (login blocked
- * immediately) and pending leave requests are auto-cancelled. The User document
- * is hard-deleted by the nightly job once the 7-day window expires; the
- * LeaveRequest history is kept.
+ * immediately) and pending leave requests are auto-cancelled. The User document is hard-deleted by the scheduled purge once the 10-day
+ * restore window expires.
  */
 export const removeEmployee = asyncHandler(async (req, res) => {
   const organizationId = requireOrganizationId(req.currentUser);
