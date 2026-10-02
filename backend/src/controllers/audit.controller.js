@@ -8,7 +8,9 @@ import { Parser } from 'json2csv';
 
 /** Spec Part 8.3 — Admin only. Audit logs are append-only. */
 export const listAuditLogs = asyncHandler(async (req, res) => {
-  const filter = {};
+  if (!req.currentUser.organizationId) throw new Error('Your account is not assigned to an organization.');
+  const organizationActorIds = await User.distinct('_id', { organizationId: req.currentUser.organizationId });
+  const filter = { actorId: { $in: organizationActorIds } };
   if (req.query.action) filter.action = req.query.action;
   if (req.query.actorId) filter.actorId = req.query.actorId;
   if (req.query.department) filter.department = req.query.department;
@@ -43,10 +45,11 @@ export const yearlyLeaveReport = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'A valid year is required.' });
   }
 
-  const balances = await LeaveBalance.find({ year }).lean();
+  const organizationEmployeeIds = await User.distinct('_id', { organizationId: req.currentUser.organizationId });
+  const balances = await LeaveBalance.find({ year, employeeId: { $in: organizationEmployeeIds } }).lean();
   const employeeIds = [...new Set(balances.map((b) => String(b.employeeId)))];
 
-  const users = await User.find({ _id: { $in: employeeIds } })
+  const users = await User.find({ _id: { $in: employeeIds }, organizationId: req.currentUser.organizationId })
     .populate('gradeId')
     .lean();
 
@@ -90,9 +93,10 @@ export const exportYearlyLeaveReport = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'A valid year is required.' });
   }
 
-  const balances = await LeaveBalance.find({ year }).lean();
+  const organizationEmployeeIds = await User.distinct('_id', { organizationId: req.currentUser.organizationId });
+  const balances = await LeaveBalance.find({ year, employeeId: { $in: organizationEmployeeIds } }).lean();
   const ids = [...new Set(balances.map((b) => String(b.employeeId)))];
-  const users = await User.find({ _id: { $in: ids } }).populate('gradeId').lean();
+  const users = await User.find({ _id: { $in: ids }, organizationId: req.currentUser.organizationId }).populate('gradeId').lean();
   const byId = new Map(users.map((u) => [String(u._id), u]));
 
   const rows = balances.map((b) => {
