@@ -29,6 +29,7 @@ router.get('/', employees.listEmployees);
 router.post('/', authorize('admin'), employees.createEmployee);
 router.get('/:id', employees.getEmployee);
 router.patch('/:id/reset-password', authorize('admin'), employees.resetEmployeePassword);
+router.patch('/:id/complete-pending', authorize('admin'), employees.completePendingEmployee);
 router.patch('/:id/suspend', authorize('admin'), employees.suspendEmployee);
 router.patch('/:id/activate', authorize('admin'), employees.activateEmployee);
 router.patch('/:id', authorize('admin'), employees.updateEmployee);
