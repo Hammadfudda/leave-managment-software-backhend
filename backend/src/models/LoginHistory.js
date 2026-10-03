@@ -9,6 +9,8 @@ const loginHistorySchema = new Schema(
     ipAddress: String,
     userAgent: String,
     successful: { type: Boolean, required: true },
+    userName: { type: String, default: '' },
+    userDeleted: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
