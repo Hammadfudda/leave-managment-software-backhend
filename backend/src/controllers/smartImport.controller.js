@@ -279,7 +279,7 @@ export const commit = asyncHandler(async (req, res) => {
       }
     }
 
-    created.push(user);
+    created.push({ user, temporaryPassword });
   }
 
   if (permissions.applyManagerAssignments) {
@@ -297,9 +297,9 @@ export const commit = asyncHandler(async (req, res) => {
     }
   }
 
-  for (const user of created) {
+  for (const entry of created) {
     try {
-      await sendEmail({ to: user.email, subject: 'Your Leave Management account is ready', html: templates.accountCreated(user, 'temporary password sent securely') });
+      await sendEmail({ to: entry.user.email, subject: 'Your Leave Management account is ready', html: templates.accountCreated(entry.user, entry.temporaryPassword) });
     } catch {}
   }
 
