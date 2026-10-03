@@ -219,6 +219,44 @@ export const listAvailableLeaveTypes = asyncHandler(async (req, res) => {
   res.json({ success: true, data: [...new Set(types)] });
 });
 
+/** GET /api/leave-requests/available-policies — drives leave-form policy requirements. */
+export const listAvailableLeavePolicies = asyncHandler(async (req, res) => {
+  const user = req.currentUser;
+  const policies = await LeavePolicy.find({
+    $or: [{ organizationId: user.organizationId }, { organizationId: null }],
+  }).sort({ leaveType: 1, createdAt: -1 });
+
+  const byType = new Map();
+  for (const candidate of policies) {
+    try {
+      const resolved = await resolvePolicy(candidate.leaveType, user);
+      if (String(resolved._id) !== String(candidate._id)) continue;
+      if (!byType.has(candidate.leaveType)) {
+        byType.set(candidate.leaveType, candidate);
+      }
+    } catch {
+      // Policy exists but is not applicable to this user.
+    }
+  }
+
+  res.json({
+    success: true,
+    data: Array.from(byType.values()).map((policy) => ({
+      _id: policy._id,
+      leaveType: policy.leaveType,
+      applicableRole: policy.applicableRole,
+      documentRequirement: policy.documentRequirement || (policy.requiresDocumentUpload ? 'required' : 'optional'),
+      approvalRouting: policy.approvalRouting || {},
+      finalApprovalMode: Boolean(policy.finalApprovalMode),
+      adminOnlyApproval: Boolean(policy.adminOnlyApproval),
+      minDaysNoticeRequired: policy.minDaysNoticeRequired ?? 0,
+      isPaid: policy.isPaid !== false,
+      carryForwardAllowed: Boolean(policy.carryForwardAllowed),
+      maxCarryForwardDays: policy.maxCarryForwardDays ?? 0,
+    })),
+  });
+});
+
 /**
  * Spec Part 5.1 / 6 — submission.
  * Admin never submits leave for anyone, including themselves: there is
