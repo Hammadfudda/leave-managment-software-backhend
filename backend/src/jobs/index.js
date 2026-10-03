@@ -23,12 +23,19 @@ export async function purgeExpiredEmployees() {
       department: user.department, removedBy: user.removedBy || null,
     };
     await purgeEmployeeData(user._id);
-    await audit({
-      actorId: snapshot.removedBy, actorName: 'System', action: 'PURGE_EMPLOYEE',
-      targetType: 'User', targetId: snapshot.id, affectedPerson: snapshot.fullName,
-      department: snapshot.department,
-      details: `Permanently deleted after the ${RESTORE_WINDOW_DAYS}-day restore window expired`,
-    });
+    // The employee's historical identity has already been anonymized by
+    // purgeEmployeeData. Keep the purge audit entry anonymized too.
+    if (snapshot.removedBy) {
+      await audit({
+        actorId: snapshot.removedBy,
+        actorName: 'System',
+        action: 'PURGE_EMPLOYEE',
+        targetType: 'User',
+        affectedPerson: 'Former Employee',
+        department: snapshot.department,
+        details: `Employee account permanently deleted after the ${RESTORE_WINDOW_DAYS}-day restore window expired; historical records retained and anonymized.`,
+      });
+    }
     await emailAdmins(
       'Employee permanently deleted',
       `${snapshot.fullName} (${snapshot.employeeId}) was permanently deleted after the ${RESTORE_WINDOW_DAYS}-day restore window expired.`
