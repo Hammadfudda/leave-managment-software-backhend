@@ -693,6 +693,7 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
     const role = String(row.role || 'employee').trim().toLowerCase();
     const designationName = String(row.designation || '').trim();
     const departmentName = String(row.department || '').trim();
+    const roleLabel = String(row.roleLabel || row.division || '').trim();
     const gradeName = String(row.grade || '').trim();
 
     const exists = await User.findOne({
@@ -751,6 +752,7 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
       passwordChangedFromDefault: false,
       mustChangePassword: true,
       role,
+      roleLabel,
       designation: designation.name,
       department: department.name,
       gradeId: grade._id,
