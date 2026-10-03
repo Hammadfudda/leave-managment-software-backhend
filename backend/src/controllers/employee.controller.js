@@ -468,7 +468,8 @@ export const restoreEmployee = asyncHandler(async (req, res) => {
 });
 /** Spec Part 10.1 — export includes leave balances, not just profile fields. */
 export const exportEmployeesCsv = asyncHandler(async (req, res) => {
-  const users = await User.find({ organizationId: requireOrganizationId(req.currentUser) }).populate('gradeId');
+  const organizationId = requireOrganizationId(req.currentUser);
+  const users = await User.find({ organizationId }).populate('gradeId');
   const leaveTypes = CORE_LEAVE_TYPES;
 
   const rows = await Promise.all(
@@ -483,7 +484,7 @@ export const exportEmployeesCsv = asyncHandler(async (req, res) => {
         designation: u.designation,
         department: u.department,
         grade: u.gradeId?.name,
-        dateOfJoining: u.dateOfJoining.toISOString().split('T')[0],
+        dateOfJoining: u.dateOfJoining?.toISOString().split('T')[0] || '',
         status: u.status,
         canApproveOtherDepartments: u.role === 'manager' ? u.canApproveOtherDepartments : '',
       };
@@ -504,13 +505,82 @@ export const exportEmployeesCsv = asyncHandler(async (req, res) => {
   res.send(csv);
 });
 
+export const listRemovedEmployees = asyncHandler(async (req, res) => {
+  const organizationId = requireOrganizationId(req.currentUser);
+  const { page, limit, skip } = getPagination(req.query);
+  const filter = { organizationId, status: 'pending_deletion' };
+
+  const [users, total] = await Promise.all([
+    User.find(filter).populate('gradeId').sort({ scheduledPurgeAt: 1, fullName: 1 }).skip(skip).limit(limit),
+    User.countDocuments(filter),
+  ]);
+
+  res.json({
+    success: true,
+    ...paginated(users.map(sanitizeUser), total, { page, limit }),
+  });
+});
+
+export const completePendingEmployee = asyncHandler(async (req, res) => {
+  const organizationId = requireOrganizationId(req.currentUser);
+  const cnic = String(req.body.cnic || '').trim();
+
+  if (!cnic) throw new ValidationError('CNIC is required.');
+
+  const user = await User.findOne({
+    _id: req.params.id,
+    organizationId,
+    status: { $ne: 'pending_deletion' },
+  });
+
+  if (!user) throw new NotFoundError('Pending employee not found.');
+  if (user.detailsStatus !== 'pending' && !user.pendingFields?.length) {
+    throw new ValidationError('This employee does not have pending details.');
+  }
+
+  const duplicate = await User.findOne({
+    organizationId,
+    _id: { $ne: user._id },
+    $or: [{ cnic }, { nationalId: cnic }],
+  });
+  if (duplicate) throw new ConflictError('That CNIC is already assigned to another employee.');
+
+  user.cnic = cnic;
+  user.nationalId = cnic;
+  user.detailsStatus = 'complete';
+  user.pendingFields = [];
+  await user.save();
+
+  await audit({
+    actorId: req.currentUser._id,
+    actorName: req.currentUser.fullName,
+    action: 'COMPLETE_PENDING_EMPLOYEE',
+    targetType: 'User',
+    targetId: user._id,
+    affectedPerson: user.fullName,
+    department: user.department,
+    details: 'Completed pending employee identity details.',
+  });
+
+  res.json({ success: true, message: 'Employee details completed successfully.', data: sanitizeUser(user) });
+});
+
 /**
- * Spec Part 10.2 — import auto-creates Department, Designation and Grade if
- * they don't exist yet. Admin drops in a CSV with department: "Logistics" even
- * if Logistics has never been added, and it just works.
+ * Smart CSV import:
+ * - preview never writes to the database;
+ * - commit creates valid rows;
+ * - rows missing CNIC are created as pending-detail employees so the Admin can
+ *   complete them later;
+ * - Department, Designation and Grade are auto-created within this organization;
+ * - all database queries are organization-scoped.
  */
 export const importEmployeesCsv = asyncHandler(async (req, res) => {
   if (!req.file) throw new ValidationError('A .csv file is required.');
+
+  const mode = String(req.query.mode || 'preview').toLowerCase();
+  if (!['preview', 'commit'].includes(mode)) {
+    throw new ValidationError('Import mode must be preview or commit.');
+  }
 
   const rows = parse(req.file.buffer, {
     columns: true,
@@ -520,84 +590,175 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
   });
 
   const organizationId = requireOrganizationId(req.currentUser);
+  const blocking = [];
+  const pendingEmployees = [];
+  const seen = new Set();
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const fullName = String(row.fullName || '').trim();
+    const email = String(row.email || '').trim().toLowerCase();
+    const employeeId = String(row.employeeId || '').trim();
+    const cnic = String(row.cnic || '').trim();
+    const role = String(row.role || 'employee').trim().toLowerCase();
+    const designation = String(row.designation || '').trim();
+    const department = String(row.department || '').trim();
+    const gradeName = String(row.grade || '').trim();
+    const dateOfJoining = String(row.dateOfJoining || '').trim();
+
+    const addBlocking = (field, message) =>
+      blocking.push({ row: rowNumber, employee: fullName || employeeId || email || `Row ${rowNumber}`, field, message });
+
+    if (!fullName) addBlocking('fullName', 'Full name is required.');
+    if (!email) addBlocking('email', 'Email is required.');
+    if (!employeeId) addBlocking('employeeId', 'Employee ID is required.');
+    if (!designation) addBlocking('designation', 'Designation is required.');
+    if (!department) addBlocking('department', 'Department is required.');
+    if (!gradeName) addBlocking('grade', 'Grade is required.');
+    if (!dateOfJoining || Number.isNaN(new Date(dateOfJoining).getTime())) {
+      addBlocking('dateOfJoining', 'A valid date of joining is required.');
+    }
+    if (!['employee', 'manager'].includes(role)) {
+      addBlocking('role', 'Role must be employee or manager.');
+    }
+
+    const duplicateKey = `${email}|${employeeId}|${cnic}`;
+    if (seen.has(duplicateKey)) addBlocking('duplicate', 'This row duplicates another row in the same CSV.');
+    seen.add(duplicateKey);
+
+    const existing = email || employeeId || cnic
+      ? await User.findOne({
+          organizationId,
+          $or: [
+            ...(email ? [{ email }] : []),
+            ...(employeeId ? [{ employeeId }] : []),
+            ...(cnic ? [{ cnic }, { nationalId: cnic }] : []),
+          ],
+        }).select('_id fullName email employeeId')
+      : null;
+
+    if (existing) {
+      addBlocking('duplicate', 'An employee with this email, employee ID or CNIC already exists.');
+    }
+
+    if (!cnic && fullName && email && employeeId && designation && department && gradeName && dateOfJoining && ['employee', 'manager'].includes(role) && !existing) {
+      pendingEmployees.push({
+        row: rowNumber,
+        fullName,
+        employeeId,
+        issues: [{ field: 'cnic', message: 'CNIC is missing. The employee can be created now and completed later.' }],
+        pendingFields: ['cnic'],
+      });
+    }
+  }
+
+  if (blocking.length) {
+    return res.status(400).json({
+      success: false,
+      message: 'CSV contains blocking errors. Nothing was imported.',
+      hardErrors: blocking,
+      summary: { total: rows.length, complete: 0, pending: pendingEmployees.length, blocking: blocking.length },
+    });
+  }
+
+  if (mode === 'preview') {
+    return res.json({
+      success: true,
+      preview: true,
+      requiresConfirmation: pendingEmployees.length > 0,
+      summary: {
+        total: rows.length,
+        complete: rows.length - pendingEmployees.length,
+        pending: pendingEmployees.length,
+        blocking: 0,
+      },
+      pendingEmployees,
+    });
+  }
 
   const results = {
     created: 0,
     skipped: [],
     autoCreated: { departments: [], designations: [], grades: [] },
+    pending: 0,
   };
 
-  for (const row of rows) {
-    if (!row.email || !row.cnic || !row.fullName) {
-      results.skipped.push({ row, reason: 'Missing fullName, email or cnic' });
-      continue;
-    }
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const fullName = String(row.fullName || '').trim();
+    const email = String(row.email || '').trim().toLowerCase();
+    const employeeId = String(row.employeeId || '').trim();
+    const cnic = String(row.cnic || '').trim();
+    const role = String(row.role || 'employee').trim().toLowerCase();
+    const designationName = String(row.designation || '').trim();
+    const departmentName = String(row.department || '').trim();
+    const gradeName = String(row.grade || '').trim();
 
     const exists = await User.findOne({
       organizationId,
-      $or: [{ email: String(row.email).toLowerCase() }, { nationalId: row.cnic }],
+      $or: [{ email }, { employeeId }, ...(cnic ? [{ cnic }, { nationalId: cnic }] : [])],
     });
     if (exists) {
-      results.skipped.push({ row, reason: 'Duplicate email or CNIC' });
+      results.skipped.push({ row, reason: 'Duplicate email, CNIC or employee ID' });
       continue;
     }
 
-    // --- Auto-create related records instead of rejecting the row ---
     let department = await Department.findOne({
-      name: row.department,
+      name: departmentName,
       $or: [{ organizationId }, { organizationId: null }],
     });
     if (!department) {
-      department = await Department.create({ name: row.department, saturdayOff: true, organizationId });
-      results.autoCreated.departments.push(row.department);
+      department = await Department.create({ name: departmentName, saturdayOff: true, organizationId });
+      results.autoCreated.departments.push(departmentName);
     }
 
     let designation = await Designation.findOne({
-      name: row.designation,
+      name: designationName,
       $or: [{ organizationId }, { organizationId: null }],
     });
     if (!designation) {
-      designation = await Designation.create({ name: row.designation, organizationId });
-      results.autoCreated.designations.push(row.designation);
+      designation = await Designation.create({ name: designationName, organizationId });
+      results.autoCreated.designations.push(designationName);
     }
 
     let grade = await Grade.findOne({
-      name: row.grade,
+      name: gradeName,
       $or: [{ organizationId }, { organizationId: null }],
     });
     if (!grade) {
-      // A brand-new grade needs *some* quota so new hires aren't stuck at zero —
-      // default to the company baseline and let Admin adjust it afterward in the
-      // Grades screen. Do not silently default to 0; that creates a support
-      // ticket for every CSV-imported employee whose grade was new.
       grade = await Grade.create({
-        name: row.grade,
+        name: gradeName,
         organizationId,
         annualLeaveQuota: 14,
         sickLeaveQuota: 7,
         casualLeaveQuota: 5,
       });
-      results.autoCreated.grades.push(row.grade);
+      results.autoCreated.grades.push(gradeName);
     }
 
     const temporaryPassword = generateTemporaryPassword();
+    const isPending = !cnic;
+    const placeholder = `PENDING-${String(organizationId).slice(-8)}-${Date.now()}-${index}`;
 
     const newUser = await User.create({
       organizationId,
-      fullName: row.fullName,
-      email: String(row.email).toLowerCase(),
-      nationalId: row.cnic,
-      cnic: row.cnic,
+      fullName,
+      email,
+      nationalId: cnic || placeholder,
+      cnic: cnic || placeholder,
       passwordHash: await bcrypt.hash(temporaryPassword, 10),
       passwordChangedFromDefault: false,
       mustChangePassword: true,
-      role: row.role || 'employee',
+      role,
       designation: designation.name,
       department: department.name,
       gradeId: grade._id,
-      employeeId: row.employeeId,
+      employeeId,
       dateOfJoining: new Date(row.dateOfJoining),
-      canApproveOtherDepartments: false, // safe default — Admin enables per manager
+      canApproveOtherDepartments: role === 'manager' ? String(row.canApproveOtherDepartments).toLowerCase() === 'true' : false,
+      detailsStatus: isPending ? 'pending' : 'complete',
+      pendingFields: isPending ? ['cnic'] : [],
     });
 
     await initializeLeaveBalances(newUser._id, grade);
@@ -608,7 +769,8 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
       html: templates.accountCreated(newUser, temporaryPassword),
     });
 
-    results.created++;
+    results.created += 1;
+    if (isPending) results.pending += 1;
   }
 
   await audit({
@@ -616,8 +778,12 @@ export const importEmployeesCsv = asyncHandler(async (req, res) => {
     actorName: req.currentUser.fullName,
     action: 'IMPORT_EMPLOYEES',
     targetType: 'BulkImport',
-    details: `Imported ${results.created} employees. Auto-created: ${results.autoCreated.departments.length} department(s), ${results.autoCreated.designations.length} designation(s), ${results.autoCreated.grades.length} grade(s).`,
+    details: `Imported ${results.created} employees. Pending details: ${results.pending}. Auto-created: ${results.autoCreated.departments.length} department(s), ${results.autoCreated.designations.length} designation(s), ${results.autoCreated.grades.length} grade(s).`,
   });
 
-  res.json({ success: true, ...results });
+  res.json({
+    success: true,
+    ...results,
+    message: `${results.created} employee(s) imported successfully.${results.pending ? ` ${results.pending} employee(s) need CNIC completion.` : ''}`,
+  });
 });
