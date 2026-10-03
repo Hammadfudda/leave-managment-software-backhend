@@ -65,12 +65,15 @@ export async function purgeEmployeeData(userId) {
   );
 
   // LeaveBalance is current-state data, not the historical LeaveRequest record.
-  // Notifications and login history are account/session data, so they can be
-  // removed once the account is permanently purged.
+  // Notifications are account-state data. Login history is historical activity,
+  // so retain it and anonymize the person instead of deleting the record.
   await Promise.all([
     LeaveBalance.deleteMany({ employeeId: user._id }),
     Notification.deleteMany({ userId: user._id }),
-    LoginHistory.deleteMany({ userId: user._id }),
+    LoginHistory.updateMany(
+      { userId: user._id },
+      { $set: { userName: anonymousName, userDeleted: true } }
+    ),
   ]);
 
   // Audit history is retained. Separate actor and target anonymization so an
