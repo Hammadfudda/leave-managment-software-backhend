@@ -16,6 +16,7 @@ router.get('/', leave.listLeaveRequests);
 // anyone, so admin is deliberately excluded from this one route (Part 5.1).
 router.post('/', authorize('employee', 'manager'), upload.single('attachment'), leave.createLeaveRequest);
 
+router.get('/:id/attachment-url', leave.getLeaveAttachmentUrl);
 router.get('/:id', leave.getLeaveRequest);
 router.patch('/:id/approve', authorize('admin', 'manager'), leave.approve);
 router.patch('/:id/reject', authorize('admin', 'manager'), leave.reject);
