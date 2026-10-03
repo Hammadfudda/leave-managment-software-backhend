@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as employees from '../controllers/employee.controller.js';
+import * as smartImport from '../controllers/smartImport.controller.js';
 import { authenticate, authorize, loadUser } from '../middleware/auth.js';
 import { uploadCsv } from '../middleware/upload.js';
 
@@ -10,6 +11,31 @@ router.use(authenticate, loadUser);
 // Static paths must be declared before /:id, otherwise "me", "removed" and
 // "export.csv" get swallowed by the id parameter.
 router.get('/me', employees.getMe);
+
+router.post(
+  '/import-smart/preview',
+  authorize('admin'),
+  uploadCsv.single('file'),
+  smartImport.preview
+);
+router.post(
+  '/import-smart/metadata-preview',
+  authorize('admin'),
+  uploadCsv.single('file'),
+  smartImport.metadataPreview
+);
+router.post(
+  '/import-smart/commit',
+  authorize('admin'),
+  uploadCsv.single('file'),
+  smartImport.commit
+);
+router.post(
+  '/import-smart/metadata-commit',
+  authorize('admin'),
+  uploadCsv.single('file'),
+  smartImport.metadataCommit
+);
 // Compatibility endpoint used by the smart CSV importer on the Employees page.
 // Email delivery is already handled by the import flow; this endpoint safely returns
 // a no-op result when there are no pending retry jobs.
