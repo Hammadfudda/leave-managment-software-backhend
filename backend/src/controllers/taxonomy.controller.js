@@ -149,7 +149,7 @@ export const departments = crudFactory({
     delete: 'DELETE_DEPARTMENT',
   },
   // Departments are stored on User by name, so a rename has to cascade.
-  writableFields: ['name', 'saturdayOff'],
+  writableFields: ['name', 'saturdayOff', 'divisionName'],
   inUseCheck: (dept, organizationId) => User.countDocuments({ department: dept.name, organizationId, status: { $ne: 'inactive' } }),
   afterUpdate: async (dept, previousName) => {
     if (previousName !== dept.name) {
