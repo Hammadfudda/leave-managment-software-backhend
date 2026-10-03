@@ -8,6 +8,7 @@ const router = Router();
 router.use(authenticate, loadUser);
 
 router.get('/available-types', leave.listAvailableLeaveTypes);
+router.get('/available-policies', leave.listAvailableLeavePolicies);
 router.get('/balance/:employeeId', leave.getBalance);
 
 router.get('/', leave.listLeaveRequests);
