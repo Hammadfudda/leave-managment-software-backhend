@@ -246,6 +246,34 @@ export const resetEmployeePassword = asyncHandler(async (req, res) => {
   });
 });
 
+export const updateEmployeeRoleLabel = asyncHandler(async (req, res) => {
+  const organizationId = requireOrganizationId(req.currentUser);
+  const roleLabel = String(req.body.roleLabel || '').trim();
+
+  const user = await User.findOne({
+    _id: req.params.id,
+    organizationId,
+    role: { $in: ['employee', 'manager'] },
+  });
+  if (!user) throw new NotFoundError('Employee or Manager not found.');
+
+  user.roleLabel = roleLabel;
+  await user.save();
+
+  await audit({
+    actorId: req.currentUser._id,
+    actorName: req.currentUser.fullName,
+    action: 'EDIT_EMPLOYEE_DIVISION',
+    targetType: 'User',
+    targetId: user._id,
+    affectedPerson: user.fullName,
+    department: user.department,
+    details: `Updated Division to "${roleLabel || 'Unassigned'}".`,
+  });
+
+  res.json({ success: true, data: sanitizeUser(user) });
+});
+
 export const updateEmployee = asyncHandler(async (req, res) => {
   const organizationId = requireOrganizationId(req.currentUser);
   const user = await User.findOne({ _id: req.params.id, organizationId });
