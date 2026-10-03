@@ -55,6 +55,8 @@ const userSchema = new Schema(
     removedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
 
     profilePhotoUrl: { type: String },
+    detailsStatus: { type: String, enum: ['complete', 'pending'], default: 'complete' },
+    pendingFields: { type: [String], default: [] },
     failedLoginAttempts: { type: Number, default: 0 },
     lockedUntil: { type: Date, default: null },
     refreshTokenHash: { type: String, default: null },
