@@ -229,6 +229,59 @@ export async function rejectLeave(requestId, approver, comment) {
 }
 
 /**
+ * Admin final decision controls used by the Approvals history view.
+ */
+export async function adminOverrideFinalDecision(requestId, admin, action, reason) {
+  if (admin.role !== 'admin') throw new ForbiddenError('Only an Admin can perform a final decision.');
+  if (!['approved', 'rejected'].includes(action) || !reason?.trim()) throw new ForbiddenError('A valid final decision and reason are required.');
+  const request = await LeaveRequest.findById(requestId);
+  if (!request) throw new NotFoundError();
+  const owner = await User.findById(request.employeeId).select('organizationId');
+  if (!owner || !admin.organizationId || String(owner.organizationId) !== String(admin.organizationId)) throw new NotFoundError();
+  if (request.isStopRequest || request.status === 'cancelled') throw new ForbiddenError('This leave cannot receive a final Admin decision.');
+  if (!['approved', 'rejected'].includes(request.status) || request.status === action) throw new ForbiddenError('Only a finalized leave with a different decision can be changed.');
+  const previousStatus = request.status;
+  request.status = action;
+  request.approvalHistory.push({ approverId: admin._id, approverName: admin.fullName, approverRole: admin.role, action, comment: reason.trim() });
+  await request.save();
+  if (previousStatus === 'approved' && action === 'rejected') await restoreLeaveBalance(request.employeeId, request.leaveType, request.totalWorkingDays);
+  if (previousStatus === 'rejected' && action === 'approved') await deductLeaveBalance(request.employeeId, request.leaveType, request.totalWorkingDays);
+  await notifyNextStep(request, action, reason.trim());
+  await audit({ actorId: admin._id, actorName: admin.fullName, action: action === 'approved' ? 'ADMIN_FINAL_APPROVE' : 'ADMIN_FINAL_REJECT', targetType: 'LeaveRequest', targetId: request._id, affectedPerson: request.employeeName, department: request.department, leaveType: request.leaveType, details: `Admin changed finalized decision from ${previousStatus} to ${action}.`, comment: reason.trim() });
+  return request;
+}
+
+export async function adminStopApprovedLeave(requestId, admin, effectiveReturnDate, reason) {
+  if (admin.role !== 'admin') throw new ForbiddenError('Only an Admin can stop approved leave.');
+  if (!effectiveReturnDate || !reason?.trim()) throw new ForbiddenError('Effective Return / Join Date and reason are required.');
+  const request = await LeaveRequest.findById(requestId);
+  if (!request) throw new NotFoundError();
+  const owner = await User.findById(request.employeeId).select('organizationId');
+  if (!owner || !admin.organizationId || String(owner.organizationId) !== String(admin.organizationId)) throw new NotFoundError();
+  if (request.status !== 'approved' || request.isStopRequest) throw new ForbiddenError('Only an approved normal leave can be stopped.');
+  const effectiveEnd = new Date(effectiveReturnDate);
+  const start = new Date(request.startDate);
+  const end = new Date(request.endDate);
+  if (Number.isNaN(effectiveEnd.getTime()) || effectiveEnd < start || effectiveEnd > end) throw new ForbiddenError('The Return / Join Date must be within the approved leave dates.');
+  const department = await Department.findOne({ name: request.department, $or: [{ organizationId: admin.organizationId }, { organizationId: null }] });
+  const saturdayOff = department?.saturdayOff ?? true;
+  const daysActuallyUsed = calcWorkingDays(start, effectiveEnd, saturdayOff);
+  const daysRestored = Math.max(0, request.totalWorkingDays - daysActuallyUsed);
+  request.actualEndDate = effectiveEnd;
+  request.daysUsedBeforeCancel = daysActuallyUsed;
+  request.cancelledBy = admin._id;
+  request.cancelledByName = admin.fullName;
+  request.cancelledReason = reason.trim();
+  request.status = 'cancelled';
+  request.approvalHistory.push({ approverId: admin._id, approverName: admin.fullName, approverRole: admin.role, action: 'cancelled', comment: reason.trim() });
+  await request.save();
+  if (daysRestored > 0) await restoreLeaveBalance(request.employeeId, request.leaveType, daysRestored);
+  await notifyNextStep(request, 'cancelled', reason.trim());
+  await audit({ actorId: admin._id, actorName: admin.fullName, action: 'ADMIN_STOP_LEAVE', targetType: 'LeaveRequest', targetId: request._id, affectedPerson: request.employeeName, department: request.department, leaveType: request.leaveType, details: `Admin stopped approved leave; ${daysRestored} working day(s) restored.`, comment: reason.trim() });
+  return request;
+}
+
+/**
  * Spec Part 5.3 — Admin override. Admin fills ONE specific person's slot only;
  * the chain still proceeds normally to whoever's next, it is not skipped.
  *
