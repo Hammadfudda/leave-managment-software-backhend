@@ -164,6 +164,28 @@ export const updatePolicy = asyncHandler(async (req, res) => {
   res.json({ success: true, data: policy });
 });
 
+export const deletePolicy = asyncHandler(async (req, res) => {
+  const policy = await LeavePolicy.findOne({
+    _id: req.params.id,
+    organizationId: req.currentUser.organizationId,
+  });
+  if (!policy) throw new NotFoundError();
+
+  await policy.deleteOne();
+
+  await audit({
+    actorId: req.currentUser._id,
+    actorName: req.currentUser.fullName,
+    action: 'DELETE_LEAVE_POLICY',
+    targetType: 'LeavePolicy',
+    targetId: policy._id,
+    leaveType: policy.leaveType,
+    details: `Deleted ${policy.leaveType} policy. Existing leave requests retain their submitted approval snapshot.`,
+  });
+
+  res.json({ success: true, message: 'Leave policy deleted.' });
+});
+
 /**
  * Spec Part 6.2 — who Admin may pick as an approver for a given department.
  * Admins always qualify. Managers qualify for their own department, or for any
