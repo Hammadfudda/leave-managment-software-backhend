@@ -14,69 +14,85 @@ export async function purgeEmployeeData(userId) {
   if (!user) return false;
 
   const anonymousName = 'Former Employee';
-  const userIdFilter = { $in: [user._id] };
 
-  // Preserve leave history and approval/audit records. The person's identity is
-  // anonymized instead of deleting historical documents.
+  // Preserve every LeaveRequest as historical data. Only anonymize the deleted
+  // employee's denormalized identity and remove that person from future approval
+  // arrays. Pending requests are already auto-cancelled by removeEmployee.
+  await LeaveRequest.updateMany(
+    { employeeId: user._id },
+    {
+      $set: {
+        employeeName: anonymousName,
+        employeeDeleted: true,
+        department: user.department || '',
+      },
+    }
+  );
+
+  await LeaveRequest.updateMany(
+    {
+      $or: [
+        { requiredApproverIds: user._id },
+        { approvedByIds: user._id },
+        { rejectedByIds: user._id },
+        { 'approvalHistory.approverId': user._id },
+      ],
+    },
+    {
+      $pull: {
+        requiredApproverIds: user._id,
+        approvedByIds: user._id,
+        rejectedByIds: user._id,
+      },
+      $set: {
+        'approvalHistory.$[history].approverName': anonymousName,
+      },
+    },
+    {
+      arrayFilters: [{ 'history.approverId': user._id }],
+    }
+  );
+
+  // Do not overwrite a real admin/manager's cancellation name. If the deleted
+  // employee was itself the person who cancelled a historical request, only
+  // that cancellation identity is anonymized.
+  await LeaveRequest.updateMany(
+    { cancelledBy: user._id },
+    {
+      $set: { cancelledByName: anonymousName },
+      $unset: { cancelledBy: '' },
+    }
+  );
+
+  // LeaveBalance is current-state data, not the historical LeaveRequest record.
+  // Notifications and login history are account/session data, so they can be
+  // removed once the account is permanently purged.
   await Promise.all([
-    LeaveRequest.updateMany(
-      { employeeId: user._id },
-      {
-        $set: {
-          employeeName: anonymousName,
-          employeeDeleted: true,
-          department: user.department || '',
-        },
-      }
-    ),
-    LeaveRequest.updateMany(
-      {
-        $or: [
-          { requiredApproverIds: userIdFilter },
-          { approvedByIds: userIdFilter },
-          { rejectedByIds: userIdFilter },
-          { 'approvalHistory.approverId': user._id },
-          { cancelledBy: user._id },
-        ],
-      },
-      {
-        $pull: {
-          requiredApproverIds: user._id,
-          approvedByIds: user._id,
-          rejectedByIds: user._id,
-        },
-        $set: {
-          'approvalHistory.$[history].approverName': anonymousName,
-          cancelledByName: anonymousName,
-        },
-      },
-      {
-        arrayFilters: [{ 'history.approverId': user._id }],
-      }
-    ),
     LeaveBalance.deleteMany({ employeeId: user._id }),
     Notification.deleteMany({ userId: user._id }),
     LoginHistory.deleteMany({ userId: user._id }),
-    AuditLog.updateMany(
-      {
-        $or: [
-          { actorId: user._id },
-          { targetId: user._id },
-        ],
-      },
-      {
-        $set: {
-          actorName: anonymousName,
-          affectedPerson: anonymousName,
-        },
-        $unset: {
-          actorId: '',
-          targetId: '',
-        },
-      }
-    ),
-    User.deleteOne({ _id: user._id }),
   ]);
+
+  // Audit history is retained. Separate actor and target anonymization so an
+  // audit performed BY this employee does not erase the identity of the person
+  // who was affected by that action, and vice versa.
+  await AuditLog.updateMany(
+    { actorId: user._id },
+    {
+      $set: { actorName: anonymousName },
+      $unset: { actorId: '' },
+    }
+  );
+
+  await AuditLog.updateMany(
+    { targetId: user._id },
+    {
+      $set: { affectedPerson: anonymousName },
+      $unset: { targetId: '' },
+    }
+  );
+
+  await User.deleteOne({ _id: user._id });
 
   return true;
 }
