@@ -11,6 +11,7 @@ const departmentSchema = new Schema(
     // false = this department works a 6-day week (Saturday is a normal working day).
     // Default true = standard 5-day week (Saturday off, same as Sunday).
     saturdayOff: { type: Boolean, default: true },
+    divisionName: { type: String, trim: true, default: '' },
   },
   { timestamps: true }
 );
