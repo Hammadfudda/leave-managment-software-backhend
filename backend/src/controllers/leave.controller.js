@@ -18,6 +18,8 @@ import {
   isCurrentTurnApprover,
   isRequiredApprover,
   rejectLeave,
+  adminOverrideFinalDecision,
+  adminStopApprovedLeave,
 } from '../services/approval.service.js';
 
 /** Resolves the policy that governs this employee + leave type (Part 6.1). */
@@ -325,6 +327,18 @@ export const createLeaveRequest = asyncHandler(async (req, res) => {
   });
 
   res.status(201).json({ success: true, data: decorate(request, user) });
+});
+
+export const adminOverrideFinalDecisionAction = asyncHandler(async (req, res) => {
+  const { action, reason } = req.body;
+  const request = await adminOverrideFinalDecision(req.params.id, req.currentUser, action, reason);
+  res.json({ success: true, data: decorate(request, req.currentUser) });
+});
+
+export const adminStopApprovedLeaveAction = asyncHandler(async (req, res) => {
+  const { effectiveReturnDate, reason } = req.body;
+  const request = await adminStopApprovedLeave(req.params.id, req.currentUser, effectiveReturnDate, reason);
+  res.json({ success: true, data: decorate(request, req.currentUser) });
 });
 
 export const approve = asyncHandler(async (req, res) => {
