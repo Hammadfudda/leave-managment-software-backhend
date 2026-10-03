@@ -10,5 +10,6 @@ router.get('/eligible-approvers', authorize('admin'), policies.listEligibleAppro
 router.get('/', authorize('admin', 'manager'), policies.listPolicies);
 router.post('/', authorize('admin'), policies.createPolicy);
 router.patch('/:id', authorize('admin'), policies.updatePolicy);
+router.delete('/:id', authorize('admin'), policies.deletePolicy);
 
 export default router;
