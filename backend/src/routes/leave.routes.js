@@ -20,6 +20,8 @@ router.get('/:id', leave.getLeaveRequest);
 router.patch('/:id/approve', authorize('admin', 'manager'), leave.approve);
 router.patch('/:id/reject', authorize('admin', 'manager'), leave.reject);
 router.patch('/:id/act-on-behalf', authorize('admin'), leave.actOnBehalfOf);
+router.patch('/:id/admin-override', authorize('admin'), leave.adminOverrideFinalDecisionAction);
+router.patch('/:id/admin-stop', authorize('admin'), leave.adminStopApprovedLeaveAction);
 router.post('/:id/extend', authorize('employee', 'manager'), leave.extendLeave);
 router.post('/:id/request-stop', authorize('employee', 'manager'), leave.requestStopLeave);
 
