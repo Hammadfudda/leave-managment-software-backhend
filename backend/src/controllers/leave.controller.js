@@ -215,6 +215,32 @@ export const getLeaveRequest = asyncHandler(async (req, res) => {
   res.json({ success: true, data: decorate(request, req.currentUser) });
 });
 
+/** GET /api/leave-requests/:id/attachment-url — authorized attachment access. */
+export const getLeaveAttachmentUrl = asyncHandler(async (req, res) => {
+  const request = await LeaveRequest.findById(req.params.id);
+  if (!request || !request.attachmentUrl) throw new NotFoundError('Attachment not found.');
+
+  const owner = await User.findById(request.employeeId).select('organizationId');
+  if (!owner || String(owner.organizationId) !== String(req.currentUser.organizationId)) {
+    throw new NotFoundError();
+  }
+
+  const involved =
+    req.currentUser.role === 'admin' ||
+    String(request.employeeId) === String(req.currentUser._id) ||
+    isRequiredApprover(request, req.currentUser._id);
+
+  if (!involved) throw new NotFoundError();
+
+  res.json({
+    success: true,
+    data: {
+      url: request.attachmentUrl,
+      name: request.attachmentName || 'Attachment',
+    },
+  });
+});
+
 /** GET /api/leave-requests/available-types — drives the submission dropdown. */
 export const listAvailableLeaveTypes = asyncHandler(async (req, res) => {
   const types = await getAvailableLeaveTypesForUser(req.currentUser);
